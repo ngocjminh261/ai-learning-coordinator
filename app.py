@@ -4,11 +4,38 @@ from slack_sdk import WebClient
 
 app = Flask(__name__)
 
-# CONNECT SCRIPT TO SLACK SANDBOX TOKENS
-SLACK_BOT_TOKEN = ""YOUR_BOT_XOXB_TOKEN_HERE""
-SLACK_USER_TOKEN = "YOUR_USER_XOXP_TOKEN_HERE"
+def load_env_file(file_path=".env"):
+    if not os.path.exists(file_path):
+        return
 
-ADMIN_SLACK_ID = "YOUR_COPIED_MEMBER_ID_HERE"
+    with open(file_path) as env_file:
+        for line in env_file:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_env_file()
+
+SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
+SLACK_USER_TOKEN = os.environ.get("SLACK_USER_TOKEN")
+ADMIN_SLACK_ID = os.environ.get("ADMIN_SLACK_ID")
+
+missing_env_vars = [
+    name
+    for name, value in {
+        "SLACK_BOT_TOKEN": SLACK_BOT_TOKEN,
+        "SLACK_USER_TOKEN": SLACK_USER_TOKEN,
+        "ADMIN_SLACK_ID": ADMIN_SLACK_ID,
+    }.items()
+    if not value
+]
+
+if missing_env_vars:
+    raise RuntimeError(f"Missing required environment variables: {', '.join(missing_env_vars)}")
 
 bot_client = WebClient(token=SLACK_BOT_TOKEN)
 user_client = WebClient(token=SLACK_USER_TOKEN)
@@ -80,4 +107,4 @@ def slack_events():
     return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
