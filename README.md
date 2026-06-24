@@ -1,69 +1,90 @@
-# 🚀 AI-Powered Slack Learning Coordinator
+# AI Learning Coordinator
 
-Welcome to our hackathon repository! This project contains **Feature 1: Proactive Struggling Learner Identification**. 
+A small Flask app that listens for Slack message events, counts learner questions, and privately alerts a coordinator when someone asks 3 or more questions.
 
-The application architecture functions as an event-driven engine: it monitors public Slack channels via real-time webhooks, tallies user question volume using an in-memory 2-column database structure, and triggers a private, highly-contextual administrative alert via the official Slack Real-Time Search (RTS) API once a student hits a threshold of 3 or more questions.
+## What it does
 
----
+- Receives Slack events at `/slack/events`
+- Counts messages from each user that end with `?`
+- Prints the live question count in the terminal
+- Sends a private Slack alert to `ADMIN_SLACK_ID` when a user reaches the threshold
+- Uses Slack search to include recent message context in the alert
 
-## Step 1: Clone the Project & Install Dependencies
+Question counts are stored in memory, so they reset when the app restarts.
 
-1. Open your terminal on your machine and clone this repository:
-   git clone <PASTE_YOUR_REPOSITORY_GITHUB_URL_HERE>
-   cd <YOUR_REPOSITORY_FOLDER_NAME>
+## Setup
 
-2. pip3 install flask slack_sdk
+Install dependencies:
 
-## Step 2: Download, Authenticate, and Start Ngrok
+```bash
+pip3 install flask slack_sdk
+```
 
-Because our Flask application runs locally (localhost:8080), it sits behind your local firewall. Slack operates in the public cloud and cannot send event notifications to your laptop without a secure public tunnel. We use Ngrok to bridge this gap.
+Create your local env file:
 
-1. Go to ngrok.com, sign up for a free account, and download the binary matching your operating system.
+```bash
+cp .env.example .env
+```
 
-2. Open your terminal and link your local installation to your account using your personal authtoken (found on your Ngrok Web Dashboard):
-    ngrok config add-authtoken YOUR_PERSONAL_AUTHTOKEN_HERE
+Then fill in `.env`:
 
-3. Boot up the network tunnel to listen to our specific Flask backend port:
-    ngrok http 8080
+```bash
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_USER_TOKEN=xoxp-your-user-token
+ADMIN_SLACK_ID=UXXXXXXXXXX
+PORT=8080
+```
 
-4. CRITICAL: Leave this terminal window running permanently! Copy the generated public forwarding URL. It will look exactly like this: https://xxxx-xxxx.ngrok-free.dev
+Add Slack scopes:
 
-## Step 3: Configure the Slack App Developer Portal
-1. Navigate to the Slack App Management Dashboard and click on your app's configuration panel.
+1. Go to your Slack app in the Slack API dashboard.
+2. Open **OAuth & Permissions**.
+3. Scroll to **Scopes**.
+4. Under **Bot Token Scopes**, click **Add an OAuth Scope** and add:
+   - `chat:write`
+   - `channels:history`
+5. Under **User Token Scopes**, click **Add an OAuth Scope** and add:
+   - `search:read`
+6. Click **Reinstall to Workspace** so Slack applies the new scopes.
 
-2. OAuth & Permissions Scopes Configuration:
-    Scroll down to Scopes.
+If you want the app to listen in private channels, add `groups:history` under **Bot Token Scopes** too.
 
-    Under Bot Token Scopes, add these five scopes: channels:history, chat:write, groups:history, im:history, mpim:history.
+To get the values for `.env`:
 
-    Under User Token Scopes, add exactly: search:read (This is mandatory. Without it, the Real-Time Search API will reject our historical data queries).
+1. In **OAuth & Permissions**, copy **Bot User OAuth Token** into `SLACK_BOT_TOKEN`.
+2. Copy **User OAuth Token** into `SLACK_USER_TOKEN`.
+3. In Slack, open your profile, click the three-dot menu, then click **Copy member ID**. Use that value for `ADMIN_SLACK_ID`.
 
-3. Scroll back to the top of the OAuth page and click the large green Reinstall to Workspace button.
+## Run locally
 
-4. Copy your newly refreshed Bot Token (xoxb-...) and User Token (xoxp-...).
+Start the Flask app:
 
-5. Acquire your Coordinator ID: Open your Slack workspace. Click your own Profile Picture -> Select Profile -> Click the three dots ... More -> Click Copy Member ID (This string starting with U acts as our ADMIN_SLACK_ID).
+```bash
+python3 app.py
+```
 
-6. Event Subscriptions (The Real-Time Handshake):
-    On the left sidebar, click Event Subscriptions and toggle it to On.
+In another terminal, expose the local server:
 
-    In the Request URL text box, paste your active Ngrok forwarding URL from Step 2 and append /slack/events to the end of it. (Example: https://xxxx.ngrok-free.dev/slack/events). Wait 2 seconds for it to state Verified.
+```bash
+ngrok http 8080
+```
 
-    Scroll down to Subscribe to bot events, click Add Bot User Event, and select message.channels. Click Save Changes.
+In Slack Event Subscriptions, set the Request URL to:
 
-## Step 4: Update Credentials & Boot the Backend
+```text
+https://your-ngrok-url.ngrok-free.dev/slack/events
+```
 
-1. Open app.py in your code editor (VS Code) and paste our verified credentials into the top configuration block:
-    SLACK_BOT_TOKEN = "xoxb-your-copied-bot-token"
-    SLACK_USER_TOKEN = "xoxp-your-copied-user-token"
-    ADMIN_SLACK_ID = "UXXXXXXXXXX"  # Paste your copied Member ID here
-2. python3 app.py
+Subscribe the bot to:
 
-## Step 5: Live Simulation Test
-1. Enter your Slack sandbox workspace and open a public channel (such as #general).
+```text
+message.channels
+```
 
-2. Simulate a struggling student by sending 3 separate messages that explicitly end with a ? character.
+Reinstall the Slack app after changing scopes or event subscriptions.
 
-3. Look at your Python terminal running app.py. You will see our database engine logging a custom 2-column matrix tracker tabular display, actively sorting users dynamically by question count.
+## Test
 
-4. Open the private Apps DM navigation tab on your Slack sidebar. You will notice our agent kept the public channel completely clear to preserve student confidence. Instead, it routed a clean, comprehensive AI Learning Coordinator Report directly to your DM feed, detailing the student's exact live search history logs!
+1. Send 3 messages in a public Slack channel that each end with `?`.
+2. Watch the terminal for the question count log.
+3. Check the coordinator Slack DM for the alert.
