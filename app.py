@@ -1,4 +1,6 @@
 import os
+import json
+import random
 from flask import Flask, request, jsonify
 from slack_sdk import WebClient
 
@@ -40,7 +42,130 @@ if missing_env_vars:
 bot_client = WebClient(token=SLACK_BOT_TOKEN)
 user_client = WebClient(token=SLACK_USER_TOKEN)
 
-question_database = {}
+TOPIC_KEYWORDS = {
+    "docker": ["docker", "container", "compose", "image", "volume"],
+    "slack api": ["slack", "bot", "token", "event", "scope"],
+    "python env": ["python", "pip", "uv", "venv", "import"],
+    "api basics": ["api", "endpoint", "request", "response", "json"],
+}
+
+student_topic_database = {}  
+active_study_groups = {}     
+
+
+def classify_topic(message_text):
+    """Scans the text for dictionary keywords and returns the assigned topic name."""
+    text_lower = message_text.lower()
+    for topic, keywords in TOPIC_KEYWORDS.items():
+        if any(keyword in text_lower for keyword in keywords):
+            return topic
+    return "unknown"
+
+
+def auto_orchestrate_study_group(topic, new_student_id):
+    """
+    Automated Grouping Engine (Pattern A - Admin Owned Private Channel):
+    Creates a private channel using the Admin User Token so that the admin can 
+    immediately inject restricted guest students without 'channel_not_found' or 
+    'user_is_ultra_restricted' exceptions.
+    """
+    import random
+
+    qualifying_students = [
+        user_id for user_id, topics in student_topic_database.items()
+        if topics.get(topic, 0) >= 3
+    ]
+    
+    # CASE 1: Only 1 student has hit the threshold for this topic so far
+    if len(qualifying_students) < 2:
+        alert_text = (
+            f"💡 *Individual Help Alert* 💡\n"
+            f"👤 Student <@{new_student_id}> has hit the query threshold for *{topic.upper()}*.\n"
+            f"📋 *Status:* Keeping student in the tracking queue. A study group will auto-provision once a second peer matches this topic."
+        )
+        bot_client.chat_postMessage(channel=ADMIN_SLACK_ID, text=alert_text)
+        return
+
+    # CASE 2: A private channel already exists for this topic -> Invite student to the SAME channel
+    if topic in active_study_groups:
+        group_data = active_study_groups[topic]
+        group_channel_id = group_data["group_channel_id"]
+        
+        if new_student_id in group_data["student_ids"]:
+            return
+            
+        try:
+            user_client.conversations_invite(channel=group_channel_id, users=new_student_id)
+            group_data["student_ids"].append(new_student_id)
+            
+            bot_client.chat_postMessage(
+                channel=group_channel_id,
+                text=f"👋 Welcome <@{new_student_id}> to our ongoing *{topic.upper()}* focus session! They have joined this workspace."
+            )
+            
+            admin_report = (
+                f"📈 *Study Group Updated*\n\n"
+                f"🏷️ *Topic:* {topic.title()} basics\n"
+                f"👤 *Added Student:* <@{new_student_id}>\n"
+                f"👥 *Current Roster:* " + ", ".join([f"<@{s}>" for s in group_data["student_ids"]]) + "\n"
+                f"🎯 *Purpose:* Expanding active intervention workspace for continuous ad-hoc support."
+            )
+            bot_client.chat_postMessage(channel=ADMIN_SLACK_ID, text=admin_report)
+            
+        except Exception as e:
+            print(f"Error adding guest student via Admin token: {e}")
+
+    # CASE 3: 2 students qualify and NO active group exists -> Create Admin-Owned Private Channel
+    else:
+        try:
+            clean_topic = topic.replace(" ", "-")
+            channel_name = f"lounge-{clean_topic}-{random.randint(100, 999)}"
+            
+            response = user_client.conversations_create(name=channel_name, is_private=True)
+            
+            if response.get("ok"):
+                group_channel_id = response["channel"]["id"]
+                
+                try:
+                    bot_user_id = bot_client.auth_test()["user_id"]
+                    user_client.conversations_invite(channel=group_channel_id, users=bot_user_id)
+                except Exception as bot_inv_err:
+                    print(f"Note: Could not invite bot to private channel: {bot_inv_err}")
+
+                for student in qualifying_students:
+                    try:
+                        user_client.conversations_invite(channel=group_channel_id, users=student)
+                    except Exception as invite_err:
+                        print(f"Admin token could not auto-invite {student}: {invite_err}")
+                
+                # Save state to memory
+                active_study_groups[topic] = {
+                    "topic": topic,
+                    "group_channel_id": group_channel_id,
+                    "student_ids": qualifying_students,
+                    "status": "active"
+                }
+                
+                bot_client.chat_postMessage(
+                    channel=group_channel_id,
+                    text=f"📚 *Welcome to the Proactive {topic.title()} Study Lounge!* 📚\n"
+                         f"Hey team, I noticed some overlapping technical questions regarding *{topic.upper()}*. "
+                         f"I've spun up this private channel with your course staff to clear up any bottlenecks together!"
+                )
+                
+                students_formatted = ", ".join([f"<@{s}>" for s in qualifying_students])
+                admin_report = (
+                    f"✨ *Study group created*\n\n"
+                    f"🏷️ *Topic:* {topic.title()} basics\n"
+                    f"👥 *Students:* {students_formatted}\n"
+                    f"📊 *Reason:* Each student asked multiple recent questions about {topic.title()} setup.\n"
+                    f"🎯 *Purpose:* Fast follow-up and ad hoc help for today's {topic.title()} confusion."
+                )
+                bot_client.chat_postMessage(channel=ADMIN_SLACK_ID, text=admin_report)
+                
+        except Exception as e:
+            print(f"Error creating admin-authorized private channel: {e}")
+
 
 @app.route("/slack/events", methods=["POST"])
 def slack_events():
@@ -54,57 +179,32 @@ def slack_events():
         
         if event.get("type") == "message" and not event.get("bot_id"):
             message_text = event.get("text", "").strip()
-            channel_id = event.get("channel")
             user_id = event.get("user")
             
             if message_text.endswith("?"):
-                question_database[user_id] = question_database.get(user_id, 0) + 1
-                current_count = question_database[user_id]
+                assigned_topic = classify_topic(message_text)
                 
-                sorted_database = sorted(question_database.items(), key=lambda item: item[1], reverse=True)
-                print("\n📊 --- REAL-TIME DATA ENGINE: LOGGING TRACKER ---")
-                print("MEMBERS          | QUESTIONS")
-                print("----------------------------")
-                for member, count in sorted_database:
-                    print(f"<@{member}>     | {count}")
-                print("---------------------------------------------------\n")
+                if user_id not in student_topic_database:
+                    student_topic_database[user_id] = {}
                 
-                if current_count >= 3:
-                    print(f"🚨 CRITICAL ALARM: User <@{user_id}> hit the struggling learner threshold!")
+                student_topic_database[user_id][assigned_topic] = student_topic_database[user_id].get(assigned_topic, 0) + 1
+                current_topic_count = student_topic_database[user_id][assigned_topic]
+                
+                print(f"\n📊 --- REAL-TIME TOPIC LOGGING MATRIX ---")
+                print(f"USER: <@{user_id}> | TOPIC: {assigned_topic.upper()} | COUNT: {current_topic_count}")
+                print(f"-----------------------------------------\n")
+                
+                # If keyword is unknown, track it silently but bypass automated group triggers
+                if assigned_topic == "unknown":
+                    return jsonify({"status": "ok"})
+                
+                if current_topic_count == 3:
+                    print(f"🚨 TOPIC THRESHOLD: User <@{user_id}> hit 3 questions for topic '{assigned_topic}'!")
                     
-                    bot_client.chat_postMessage(
-                        channel=ADMIN_SLACK_ID, 
-                        text=f"⏳ *Proactive Learning Pipeline Triggered:* <@{user_id}> has logged *{current_count} questions* ending in '?'. Compiling workspace context via Real-Time Search API..."
-                    )
-                    
-                    try:
-                        rts_query = f"from:<@{user_id}>"
-                        rts_response = user_client.search_messages(query=rts_query, count=5)
-                        
-                        context_summary = ""
-                        if rts_response.get("ok"):
-                            matches = rts_response.get("messages", {}).get("matches", [])
-                            for idx, msg in enumerate(matches, 1):
-                                text = msg.get("text", "")
-                                context_summary += f"   {idx}. \"_{text}_\"\n"
-                        
-                        if not context_summary:
-                            context_summary = "   _No prior searchable query history available._\n"
-                            
-                        alert_payload = (
-                            f"🚨 *AI LEARNING COORDINATOR ALERT* 🚨\n\n"
-                            f"👤 *Struggling Learner Identified:* <@{user_id}>\n"
-                            f"📈 *Total Query Volume:* {current_count} questions tracked\n"
-                            f"📡 *Real-Time Search (RTS) Historical Query Logs:*\n{context_summary}\n"
-                            f"🎯 *Next System Actions:* Auto-initializing Study Group creation routines & mentor availability mapping dashboards..."
-                        )
-                        
-                        bot_client.chat_postMessage(channel=ADMIN_SLACK_ID, text=alert_payload)
-                        
-                    except Exception as e:
-                        print(f"RTS Execution Failure: {e}")
+                    auto_orchestrate_study_group(assigned_topic, user_id)
                         
     return jsonify({"status": "ok"})
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
