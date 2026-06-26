@@ -1,6 +1,8 @@
 import os
 import json
 import random
+import time
+import threading
 from flask import Flask, request, jsonify
 from slack_sdk import WebClient
 
@@ -49,7 +51,8 @@ TOPIC_KEYWORDS = {
     "api basics": ["api", "endpoint", "request", "response", "json"],
 }
 
-student_topic_database = {}  
+student_topic_database = {}
+student_question_history = {}  
 active_study_groups = {}     
 
 
@@ -64,10 +67,9 @@ def classify_topic(message_text):
 
 def auto_orchestrate_study_group(topic, new_student_id):
     """
-    Automated Grouping Engine (Pattern A - Admin Owned Private Channel):
-    Creates a private channel using the Admin User Token so that the admin can 
-    immediately inject restricted guest students without 'channel_not_found' or 
-    'user_is_ultra_restricted' exceptions.
+    Automated Grouping Engine (Pattern A - Fully Briefed Private Channel):
+    Creates or updates private focus lounges, making sure the professor can see
+    the exact historical text backlog of every student who steps inside.
     """
     import random
 
@@ -86,7 +88,7 @@ def auto_orchestrate_study_group(topic, new_student_id):
         bot_client.chat_postMessage(channel=ADMIN_SLACK_ID, text=alert_text)
         return
 
-    # CASE 2: A private channel already exists for this topic -> Invite student to the SAME channel
+    # CASE 2: A private channel already exists for this topic -> Invite student and print their brief
     if topic in active_study_groups:
         group_data = active_study_groups[topic]
         group_channel_id = group_data["group_channel_id"]
@@ -98,9 +100,16 @@ def auto_orchestrate_study_group(topic, new_student_id):
             user_client.conversations_invite(channel=group_channel_id, users=new_student_id)
             group_data["student_ids"].append(new_student_id)
             
+            # Grab and print any new joining student's question history
+            new_student_questions = student_question_history.get(new_student_id, {}).get(topic, ["Question text archived."])
+            history_logs = f"👤 *<@{new_student_id}> asked:*\n"
+            for q in new_student_questions:
+                history_logs += f"  • _\"{q}\"_\n"
+
             bot_client.chat_postMessage(
                 channel=group_channel_id,
-                text=f"👋 Welcome <@{new_student_id}> to our ongoing *{topic.upper()}* focus session! They have joined this workspace."
+                text=f"👋 Welcome <@{new_student_id}> to our ongoing *{topic.upper()}* focus session!\n\n"
+                     f"📋 *Context Briefing for Course Staff:*\n{history_logs}"
             )
             
             admin_report = (
@@ -108,7 +117,8 @@ def auto_orchestrate_study_group(topic, new_student_id):
                 f"🏷️ *Topic:* {topic.title()} basics\n"
                 f"👤 *Added Student:* <@{new_student_id}>\n"
                 f"👥 *Current Roster:* " + ", ".join([f"<@{s}>" for s in group_data["student_ids"]]) + "\n"
-                f"🎯 *Purpose:* Expanding active intervention workspace for continuous ad-hoc support."
+                f"🎯 *Purpose:* Expanding active intervention workspace.\n\n"
+                f"🔍 *New Backlog Material:*\n{history_logs}"
             )
             bot_client.chat_postMessage(channel=ADMIN_SLACK_ID, text=admin_report)
             
@@ -146,11 +156,19 @@ def auto_orchestrate_study_group(topic, new_student_id):
                     "status": "active"
                 }
                 
+                history_logs = ""
+                for student in qualifying_students:
+                    student_questions = student_question_history.get(student, {}).get(topic, ["Question text archived."])
+                    history_logs += f"👤 *<@{student}> asked:*\n"
+                    for q in student_questions:
+                        history_logs += f"  • _\"{q}\"_\n"
+                
                 bot_client.chat_postMessage(
                     channel=group_channel_id,
                     text=f"📚 *Welcome to the Proactive {topic.title()} Study Lounge!* 📚\n"
                          f"Hey team, I noticed some overlapping technical questions regarding *{topic.upper()}*. "
-                         f"I've spun up this private channel with your course staff to clear up any bottlenecks together!"
+                         f"I've spun up this private channel with your course staff to clear up any bottlenecks together!\n\n"
+                         f"📋 *Context Briefing for Course Staff:*\n{history_logs}"
                 )
                 
                 students_formatted = ", ".join([f"<@{s}>" for s in qualifying_students])
@@ -159,12 +177,73 @@ def auto_orchestrate_study_group(topic, new_student_id):
                     f"🏷️ *Topic:* {topic.title()} basics\n"
                     f"👥 *Students:* {students_formatted}\n"
                     f"📊 *Reason:* Each student asked multiple recent questions about {topic.title()} setup.\n"
-                    f"🎯 *Purpose:* Fast follow-up and ad hoc help for today's {topic.title()} confusion."
+                    f"🎯 *Purpose:* Fast follow-up and ad hoc help for today's {topic.title()} confusion.\n\n"
+                    f"🔍 *Aggregated Backlog Material:*\n{history_logs}"
                 )
                 bot_client.chat_postMessage(channel=ADMIN_SLACK_ID, text=admin_report)
                 
         except Exception as e:
             print(f"Error creating admin-authorized private channel: {e}")
+
+
+def active_search_polling_worker():
+    """
+    Background Worker: Uses the native Slack Search API to query the workspace 
+    for recent questions, syncing them with the live orchestration tracking matrix.
+    """
+    print("🚀 Real-Time Search API Polling Thread Started...")
+    
+    try:
+        bot_user_id = bot_client.auth_test()["user_id"]
+    except:
+        bot_user_id = None
+
+    while True:
+        try:
+            response = user_client.search_messages(query="?", count=10, sort="timestamp")
+            
+            if response.get("ok"):
+                matches = response.get("messages", {}).get("matches", [])
+                
+                for match in matches:
+                    user_id = match.get("user")
+                    message_text = match.get("text", "").strip()
+                    
+                    if not user_id or user_id == bot_user_id or not message_text.endswith("?"):
+                        continue
+                    
+                    assigned_topic = classify_topic(message_text)
+                    if assigned_topic == "unknown":
+                        continue
+                        
+                    if user_id not in student_topic_database:
+                        student_topic_database[user_id] = {}
+                    
+                    current_topic_count = student_topic_database[user_id].get(assigned_topic, 0)
+                    
+                    if current_topic_count < 3:
+                        if user_id not in student_question_history:
+                            student_question_history[user_id] = {}
+                        if assigned_topic not in student_question_history[user_id]:
+                            student_question_history[user_id][assigned_topic] = []
+                        student_question_history[user_id][assigned_topic].append(message_text)
+
+                        student_topic_database[user_id][assigned_topic] = current_topic_count + 1
+                        new_count = student_topic_database[user_id][assigned_topic]
+                        
+                        print(f"\n🔍 --- SEARCH API REAL-TIME MATCH DETECTED ---")
+                        print(f"USER: <@{user_id}> | TOPIC: {assigned_topic.upper()} | COUNT: {new_count}")
+                        print(f"TEXT: \"{message_text}\"")
+                        print(f"-----------------------------------------------\n")
+                        
+                        if new_count == 3:
+                            print(f"🚨 SEARCH API THRESHOLD: User <@{user_id}> hit 3 questions!")
+                            auto_orchestrate_study_group(assigned_topic, user_id)
+                            
+        except Exception as e:
+            print(f"Search API Polling Error: {e}")
+            
+        time.sleep(10)
 
 
 @app.route("/slack/events", methods=["POST"])
@@ -187,6 +266,12 @@ def slack_events():
                 if user_id not in student_topic_database:
                     student_topic_database[user_id] = {}
                 
+                if user_id not in student_question_history:
+                    student_question_history[user_id] = {}
+                if assigned_topic not in student_question_history[user_id]:
+                    student_question_history[user_id][assigned_topic] = []
+                student_question_history[user_id][assigned_topic].append(message_text)
+
                 student_topic_database[user_id][assigned_topic] = student_topic_database[user_id].get(assigned_topic, 0) + 1
                 current_topic_count = student_topic_database[user_id][assigned_topic]
                 
@@ -207,4 +292,8 @@ def slack_events():
 
 
 if __name__ == "__main__":
+    # Start the active Slack Search API engine in a concurrent background thread
+    search_thread = threading.Thread(target=active_search_polling_worker, daemon=True)
+    search_thread.start()
+    
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
