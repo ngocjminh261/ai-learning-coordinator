@@ -19,6 +19,7 @@ events/
 features/
   study_groups.py
   quiz_maker.py
+  syllabus_compiler.py
   faq_bot.py
 
 services/
@@ -57,34 +58,36 @@ Instructor page
 ## Shared Services
 
 - `slack_service.py`: post messages, open DMs, create groups, invite students, fetch channel messages.
-- `ai_service.py`: generate quiz drafts, summarize quiz answers, draft FAQ entries.
-- `storage_service.py`: store question counts, topic groups, quiz drafts, responses, syllabus topics, and FAQ drafts.
+- `ai_service.py`: summarize syllabus material, generate quiz drafts, summarize quiz answers, draft FAQ entries.
+- `storage_service.py`: store question counts, topic groups, course maps, quiz drafts, responses, and FAQ drafts.
 
 ## Data Model
 
-Start in memory or SQLite.
+Start with inspectable JSON files for course maps and drafts. Move to SQLite only if the data model gets harder to manage.
 
 Core records:
 
 - `StudentQuestion`: user, channel, text, topic, timestamp
+- `CourseMap`: channel, syllabus source, topics, modules, learning objectives
 - `StudyGroup`: topic, date, students, Slack group/channel ID, status
 - `Quiz`: topic, questions, recipients, responses, summary
-- `FAQDraft`: topics, source messages, question-answer pairs
+- `FAQDraft`: course map, source messages, question-answer pairs, review status
 
 ## Feature Boundaries
 
 - Study groups can run without AI by using the topic dictionary.
 - Quiz maker uses AI for draft questions and response summaries.
-- FAQ bot uses AI for summarization and syllabus-based grouping.
+- Syllabus compiler uses AI to create reusable course context.
+- FAQ maker uses AI for repeated-question clustering and syllabus-based grouping.
 - All AI output must be reviewed before broad sharing.
 
 ## Build Order
 
 1. Refactor current `app.py` into event parsing, services, and feature handlers.
 2. Implement Feature 1 using question counts and topic dictionary.
-3. Add instructor UI shell for quiz and FAQ workflows.
-4. Add AI service for quiz drafts, quiz summaries, and FAQ drafts.
-5. Add lightweight persistence if in-memory state becomes too limiting.
+3. Add syllabus compiler and lightweight course-map storage.
+4. Add instructor UI shell for quiz and FAQ workflows.
+5. Add AI service for syllabus summaries, quiz drafts, quiz summaries, and FAQ drafts.
 
 ## Failure Rule
 
