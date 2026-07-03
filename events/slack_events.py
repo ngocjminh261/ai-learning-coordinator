@@ -68,6 +68,10 @@ def active_search_polling_worker(storage, slack_service, study_group_orchestrato
                     if not user_id or user_id == bot_user_id or not message_text.endswith("?"):
                         continue
 
+                    match_channel_name = match.get("channel", {}).get("name")
+                    if match_channel_name not in ["general", "questions"]:
+                        continue
+
                     assigned_topic = classify_topic(message_text)
                     if assigned_topic == "unknown":
                         continue
