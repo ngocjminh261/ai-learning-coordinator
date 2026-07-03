@@ -31,6 +31,7 @@ def get_required_config():
         "ADMIN_SLACK_ID": os.environ.get("ADMIN_SLACK_ID"),
         "ADMIN_SLACK_IDS": parse_csv_env(os.environ.get("ADMIN_SLACK_IDS")),
         "COURSE_CHANNEL_ID": os.environ.get("COURSE_CHANNEL_ID"),
+        "SLACK_TA_CHANNEL_ID": os.environ.get("SLACK_TA_CHANNEL_ID"),
         "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY"),
         "GEMINI_MODEL": os.environ.get("GEMINI_MODEL", "gemini-1.5-flash"),
         "OLLAMA_BASE_URL": os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),

@@ -29,7 +29,11 @@ ai_service = SyllabusAIService(
     ollama_base_url=config["OLLAMA_BASE_URL"],
     ollama_model=config["OLLAMA_MODEL"],
 )
-study_group_orchestrator = StudyGroupOrchestrator(storage, slack_service)
+study_group_orchestrator = StudyGroupOrchestrator(
+    storage, 
+    slack_service, 
+    ta_channel_id=config.get("SLACK_TA_CHANNEL_ID")
+)
 syllabus_compiler = SyllabusCompiler(
     storage=storage,
     slack_service=slack_service,

@@ -19,9 +19,10 @@ def classify_topic(message_text):
 
 
 class StudyGroupOrchestrator:
-    def __init__(self, storage, slack_service):
+    def __init__(self, storage, slack_service, ta_channel_id=None):
         self.storage = storage
         self.slack_service = slack_service
+        self.ta_channel_id = ta_channel_id
 
     def auto_orchestrate_study_group(self, topic, new_student_id, origin_channel_id=None):
         """
@@ -139,6 +140,22 @@ class StudyGroupOrchestrator:
                             f"Want to clear up bottlenecks together? Feel free to search and join in: <#{group_channel_id}>! 🚀"
                         )
                         self.slack_service.post_channel_message(origin_channel_id, announcement_text)
+
+                    try:
+                        if self.ta_channel_id:
+                            ta_alert_text = (
+                                f"🚨 *TA Action Required: New Lab Session Ready!* 🚨\n"
+                                f"A public study lounge has just been provisioned for *{topic.upper()}* with 3 qualifying students.\n"
+                                f"👉 *Lounge Channel:* <#{group_channel_id}>\n"
+                                f"Please jump into the channel when available to hold a lab session and clear up their bottlenecks! 👨‍💻"
+                            )
+                            
+                            self.slack_service.post_channel_message(self.ta_channel_id, ta_alert_text)
+                        else:
+                            print("Note: SLACK_TA_CHANNEL_ID is missing from environmental parameters.")
+                            
+                    except Exception as ta_err:
+                        print(f"Note: Could not post to private #teaching-assistant channel: {ta_err}")
 
             except Exception as e:
                 print(f"Error creating channel: {e}")
