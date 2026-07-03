@@ -6,17 +6,23 @@ from features.syllabus_compiler import (
     format_existing_canvas_message,
     format_success_message,
     is_pdf_file,
+    is_syllabus_upload,
+    normalize_profile_title,
 )
 from services.storage_service import InMemoryStorage
 
 
 class FakeSlackService:
-    def __init__(self):
+    def __init__(self, user_titles=None):
         self.messages = []
         self.created_canvases = []
+        self.user_titles = user_titles or {}
 
     def post_message(self, channel_id, text):
         self.messages.append({"channel": channel_id, "text": text})
+
+    def get_user_profile_title(self, user_id):
+        return self.user_titles.get(user_id, "")
 
     def download_file(self, url):
         return b"fake pdf bytes"
@@ -50,9 +56,9 @@ class FakeAIService:
         }
 
 
-def build_compiler(tmp_path, admin_ids=None):
+def build_compiler(tmp_path, admin_ids=None, user_titles=None):
     storage = InMemoryStorage(course_state_path=tmp_path / "course_state.json")
-    slack_service = FakeSlackService()
+    slack_service = FakeSlackService(user_titles=user_titles)
     compiler = SyllabusCompiler(
         storage=storage,
         slack_service=slack_service,
@@ -110,15 +116,33 @@ def test_admin_pdf_upload_creates_canvas_and_state(tmp_path, monkeypatch):
     assert state["faq_canvas"]["channel_id"] == "CGENERAL"
 
 
-def test_non_admin_upload_is_rejected(tmp_path):
+def test_instructor_title_upload_creates_canvas_and_state(tmp_path, monkeypatch):
+    compiler, storage, slack_service = build_compiler(
+        tmp_path,
+        admin_ids=["UADMIN"],
+        user_titles={"UINSTRUCTOR": "Instructor"},
+    )
+    monkeypatch.setattr(
+        "features.syllabus_compiler.extract_pdf_text",
+        lambda pdf_bytes: "Syllabus text",
+    )
+
+    result = compiler.handle_slack_file_event(pdf_file_event(user_id="UINSTRUCTOR"))
+
+    assert result == {"handled": True, "status": "created", "canvas_id": "F123CANVAS"}
+    assert slack_service.created_canvases
+    assert storage.load_course_state()["faq_canvas"]["canvas_id"] == "F123CANVAS"
+
+
+def test_non_staff_upload_is_rejected(tmp_path):
     compiler, storage, slack_service = build_compiler(tmp_path)
 
     result = compiler.handle_slack_file_event(pdf_file_event(user_id="USTUDENT"))
 
-    assert result == {"handled": True, "status": "rejected_non_admin"}
+    assert result == {"handled": True, "status": "rejected_non_staff"}
     assert not slack_service.created_canvases
     assert not storage.load_course_state()
-    assert "Only configured professor/admin" in slack_service.messages[0]["text"]
+    assert "Instructor or Teaching Assistant" in slack_service.messages[0]["text"]
 
 
 def test_same_file_id_upload_only_creates_one_canvas(tmp_path, monkeypatch):
@@ -196,10 +220,10 @@ def test_non_pdf_upload_is_rejected(tmp_path):
     compiler, storage, slack_service = build_compiler(tmp_path)
     event = pdf_file_event()
     event["files"][0] = {
-        "name": "notes.txt",
+        "name": "syllabus.txt",
         "id": "FTXT",
         "mimetype": "text/plain",
-        "url_private_download": "https://files.slack.test/notes.txt",
+        "url_private_download": "https://files.slack.test/syllabus.txt",
     }
 
     result = compiler.handle_slack_file_event(event)
@@ -207,6 +231,36 @@ def test_non_pdf_upload_is_rejected(tmp_path):
     assert result == {"handled": True, "status": "rejected_non_pdf"}
     assert not slack_service.created_canvases
     assert not storage.load_course_state()
+    assert "Please upload a PDF syllabus." in slack_service.messages[0]["text"]
+
+
+def test_non_syllabus_file_upload_is_ignored(tmp_path):
+    compiler, storage, slack_service = build_compiler(tmp_path)
+    event = pdf_file_event()
+    event["files"][0]["name"] = "lecture-notes.pdf"
+
+    result = compiler.handle_slack_file_event(event)
+
+    assert result == {"handled": False}
+    assert not slack_service.messages
+    assert not slack_service.created_canvases
+    assert not storage.load_course_state()
+
+
+def test_syllabus_text_with_non_pdf_upload_is_rejected(tmp_path):
+    compiler, storage, slack_service = build_compiler(tmp_path)
+    event = pdf_file_event()
+    event["text"] = "syllabus"
+    event["files"][0] = {
+        "name": "course-outline.docx",
+        "id": "FDOCX",
+        "mimetype": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "url_private_download": "https://files.slack.test/course-outline.docx",
+    }
+
+    result = compiler.handle_slack_file_event(event)
+
+    assert result == {"handled": True, "status": "rejected_non_pdf"}
     assert "Please upload a PDF syllabus." in slack_service.messages[0]["text"]
 
 
@@ -228,6 +282,17 @@ def test_pdf_detection_accepts_multiple_slack_shapes():
     assert is_pdf_file({"filetype": "pdf"})
     assert is_pdf_file({"mimetype": "application/pdf"})
     assert not is_pdf_file({"name": "syllabus.docx"})
+
+
+def test_syllabus_upload_detection_uses_message_text_or_file_name():
+    assert is_syllabus_upload({"text": "syllabus"}, {"name": "course.pdf"})
+    assert is_syllabus_upload({"text": ""}, {"name": "syllabus.pdf"})
+    assert not is_syllabus_upload({"text": "lecture note"}, {"name": "week-1.pdf"})
+
+
+def test_profile_title_normalization_handles_extra_space():
+    assert normalize_profile_title(" Instructor ") == "Instructor"
+    assert normalize_profile_title("\u00a0Teaching   Assistant") == "Teaching Assistant"
 
 
 def test_upload_key_prefers_file_id_and_has_fallback():

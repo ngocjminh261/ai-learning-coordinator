@@ -1,6 +1,6 @@
 # AI Learning Coordinator
 
-A small Flask app that listens for Slack message events, counts learner questions, and can turn an admin-uploaded syllabus PDF into a quick fact sheet Slack canvas.
+A small Flask app that listens for Slack message events, counts learner questions, and can turn a DM'd syllabus PDF into a quick fact sheet Slack canvas.
 
 ## What it does
 
@@ -9,7 +9,7 @@ A small Flask app that listens for Slack message events, counts learner question
 - Prints the live question count in the terminal
 - Sends a private Slack alert to `ADMIN_SLACK_ID` when a user reaches the threshold
 - Uses Slack search to include recent message context in the alert
-- Lets an admin DM the bot a syllabus PDF
+- Lets an admin DM the bot a PDF labeled as a syllabus
 - Extracts course name, instructor, schedule, location, contacts, and office hours with Gemini or Ollama
 - Creates a `Course quick fact + FAQ` canvas in `COURSE_CHANNEL_ID`
 
@@ -56,6 +56,7 @@ Add Slack scopes:
 	   - `channels:history`
 	   - `files:read`
 	   - `canvases:write`
+	   - `users:read`
 5. Under **User Token Scopes**, click **Add an OAuth Scope** and add:
 	   - `search:read`
 6. Click **Reinstall to Workspace** so Slack applies the new scopes.
@@ -107,7 +108,7 @@ Question-count flow:
 
 Syllabus quick fact flow:
 
-1. DM the bot a syllabus PDF from an admin Slack account.
+1. DM the bot a PDF named `syllabus.pdf`, or upload a PDF with `syllabus` in the DM text, from an Instructor or Teaching Assistant Slack account.
 2. Confirm the bot replies with a canvas ID.
 3. Confirm `Course quick fact + FAQ` appears in `COURSE_CHANNEL_ID`.
 4. Check `data/course_state.json` for the latest active syllabus/canvas state.

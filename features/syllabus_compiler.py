@@ -2,6 +2,9 @@ from datetime import datetime, timezone
 from io import BytesIO
 
 
+STAFF_TITLES = {"Instructor", "Teaching Assistant"}
+
+
 class SyllabusCompiler:
     def __init__(self, storage, slack_service, ai_service, admin_slack_ids, course_channel_id):
         self.storage = storage
@@ -17,15 +20,19 @@ class SyllabusCompiler:
         user_id = event.get("user")
         response_channel = event.get("channel")
 
-        if user_id not in self.admin_slack_ids:
+        if not self.is_staff_user(user_id):
             self.slack_service.post_message(
                 response_channel,
-                "Only configured professor/admin users can upload a syllabus.",
+                "Only users with the Instructor or Teaching Assistant title can upload a syllabus.",
             )
-            return {"handled": True, "status": "rejected_non_admin"}
+            return {"handled": True, "status": "rejected_non_staff"}
 
         files = event.get("files", [])
-        pdf_file = next((file_data for file_data in files if is_pdf_file(file_data)), None)
+        syllabus_files = [file_data for file_data in files if is_syllabus_upload(event, file_data)]
+        if not syllabus_files:
+            return {"handled": False}
+
+        pdf_file = next((file_data for file_data in syllabus_files if is_pdf_file(file_data)), None)
         if not pdf_file:
             self.slack_service.post_message(
                 response_channel,
@@ -69,6 +76,18 @@ class SyllabusCompiler:
             format_success_message(course_map, canvas_id),
         )
         return {"handled": True, "status": "created", "canvas_id": canvas_id}
+
+    def is_staff_user(self, user_id):
+        if user_id in self.admin_slack_ids:
+            return True
+
+        try:
+            user_title = self.slack_service.get_user_profile_title(user_id)
+        except Exception as exc:
+            print(f"Could not read Slack profile title for <@{user_id}>: {exc}")
+            return False
+
+        return normalize_profile_title(user_title) in STAFF_TITLES
 
     def create_canvas_from_pdf_file(self, pdf_file):
         pdf_bytes = self.slack_service.download_file(get_file_download_url(pdf_file))
@@ -124,6 +143,16 @@ def is_pdf_file(file_data):
         or file_data.get("filetype") == "pdf"
         or file_name.endswith(".pdf")
     )
+
+
+def is_syllabus_upload(event, file_data):
+    text = event.get("text", "")
+    file_name = file_data.get("name") or file_data.get("title") or ""
+    return "syllabus" in f"{text} {file_name}".lower()
+
+
+def normalize_profile_title(title):
+    return " ".join((title or "").split())
 
 
 def get_file_download_url(file_data):

@@ -22,6 +22,11 @@ class SlackService:
     def post_message(self, channel_id, text):
         return self.bot_client.chat_postMessage(channel=channel_id, text=text)
 
+    def get_user_profile_title(self, user_id):
+        response = self.bot_client.users_info(user=user_id)
+        profile = response.get("user", {}).get("profile", {})
+        return profile.get("title", "")
+
     def download_file(self, url):
         request = Request(url, headers={"Authorization": f"Bearer {self.bot_token}"})
         with urlopen(request) as response:
