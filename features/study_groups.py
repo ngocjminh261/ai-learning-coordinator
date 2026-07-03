@@ -25,8 +25,8 @@ class StudyGroupOrchestrator:
 
     def auto_orchestrate_study_group(self, topic, new_student_id):
         """
-        Automated Grouping Engine (Pattern A - Fully Briefed Private Channel):
-        Creates or updates private focus lounges, making sure the professor can see
+        Automated Grouping Engine:
+        Creates or updates focus lounges, making sure the professor can see
         the exact historical text backlog of every student who steps inside.
         """
         qualifying_students = self.storage.get_qualifying_students(topic)
@@ -41,7 +41,7 @@ class StudyGroupOrchestrator:
             self.slack_service.post_admin_message(alert_text)
             return
 
-        # CASE 2: A private channel already exists for this topic -> Invite student and print their brief
+        # CASE 2: A channel already exists for this topic -> Invite student and print their brief
         group_data = self.storage.get_study_group(topic)
         if group_data:
             group_channel_id = group_data["group_channel_id"]
@@ -75,7 +75,7 @@ class StudyGroupOrchestrator:
             except Exception as e:
                 print(f"Error adding guest student via Admin token: {e}")
 
-        # CASE 3: 2 students qualify and NO active group exists -> Create Admin-Owned Private Channel
+        # CASE 3: 2 students qualify and NO active group exists -> Create Channel
         else:
             try:
                 clean_topic = topic.replace(" ", "-")
@@ -90,7 +90,7 @@ class StudyGroupOrchestrator:
                         bot_user_id = self.slack_service.get_bot_user_id()
                         self.slack_service.invite_user_to_channel(group_channel_id, bot_user_id)
                     except Exception as bot_inv_err:
-                        print(f"Note: Could not invite bot to private channel: {bot_inv_err}")
+                        print(f"Note: Could not invite bot to channel: {bot_inv_err}")
 
                     for student in qualifying_students:
                         try:
@@ -117,7 +117,7 @@ class StudyGroupOrchestrator:
                         group_channel_id,
                         text=f"📚 *Welcome to the Proactive {topic.title()} Study Lounge!* 📚\n"
                         f"Hey team, I noticed some overlapping technical questions regarding *{topic.upper()}*. "
-                        f"I've spun up this private channel with your course staff to clear up any bottlenecks together!\n\n"
+                        f"I've spun up this channel with your course staff to clear up any bottlenecks together!\n\n"
                         f"📋 *Context Briefing for Course Staff:*\n{history_logs}",
                     )
 
@@ -133,7 +133,7 @@ class StudyGroupOrchestrator:
                     self.slack_service.post_admin_message(admin_report)
 
             except Exception as e:
-                print(f"Error creating admin-authorized private channel: {e}")
+                print(f"Error creating channel: {e}")
 
     def _format_student_history(self, student_id, questions):
         history_logs = f"👤 *<@{student_id}> asked:*\n"
