@@ -81,7 +81,7 @@ class StudyGroupOrchestrator:
                 clean_topic = topic.replace(" ", "-")
                 channel_name = f"lounge-{clean_topic}-{random.randint(100, 999)}"
 
-                response = self.slack_service.create_private_channel(channel_name)
+                response = self.slack_service.create_public_channel(channel_name)
 
                 if response.get("ok"):
                     group_channel_id = response["channel"]["id"]

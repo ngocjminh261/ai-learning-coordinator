@@ -10,6 +10,9 @@ from services.ai_service import SyllabusAIService
 from services.slack_service import SlackService
 from services.storage_service import InMemoryStorage
 
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+
 
 app = Flask(__name__)
 
