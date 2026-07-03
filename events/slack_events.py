@@ -84,7 +84,8 @@ def active_search_polling_worker(storage, slack_service, study_group_orchestrato
 
                         if new_count == 3:
                             print(f"🚨 SEARCH API THRESHOLD: User <@{user_id}> hit 3 questions!")
-                            _trigger_study_group(study_group_orchestrator, assigned_topic, user_id)
+                            match_channel_id = match.get("channel", {}).get("id")
+                            _trigger_study_group(study_group_orchestrator, assigned_topic, user_id, match_channel_id)
 
         except Exception as e:
             print(f"Search API Polling Error: {e}")
@@ -92,8 +93,8 @@ def active_search_polling_worker(storage, slack_service, study_group_orchestrato
         time.sleep(10)
 
 
-def _trigger_study_group(study_group_orchestrator, assigned_topic, user_id):
+def _trigger_study_group(study_group_orchestrator, assigned_topic, user_id, channel_id=None):
     try:
-        study_group_orchestrator.auto_orchestrate_study_group(assigned_topic, user_id)
+        study_group_orchestrator.auto_orchestrate_study_group(assigned_topic, user_id, channel_id)
     except Exception as e:
         print(f"Study group orchestration error: {e}")

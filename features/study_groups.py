@@ -23,7 +23,7 @@ class StudyGroupOrchestrator:
         self.storage = storage
         self.slack_service = slack_service
 
-    def auto_orchestrate_study_group(self, topic, new_student_id):
+    def auto_orchestrate_study_group(self, topic, new_student_id, origin_channel_id=None):
         """
         Automated Grouping Engine:
         Creates or updates focus lounges, making sure the professor can see
@@ -31,12 +31,12 @@ class StudyGroupOrchestrator:
         """
         qualifying_students = self.storage.get_qualifying_students(topic)
 
-        # CASE 1: Only 1 student has hit the threshold for this topic so far
-        if len(qualifying_students) < 2:
+        # CASE 1: Less than 3 students have hit the threshold for this topic so far
+        if len(qualifying_students) < 3:
             alert_text = (
                 f"💡 *Individual Help Alert* 💡\n"
                 f"👤 Student <@{new_student_id}> has hit the query threshold for *{topic.upper()}*.\n"
-                f"📋 *Status:* Keeping student in the tracking queue. A study group will auto-provision once a second peer matches this topic."
+                f"📋 *Status:* Keeping student in the tracking queue. A study group will auto-provision once a third peer matches this topic."
             )
             self.slack_service.post_admin_message(alert_text)
             return
@@ -75,7 +75,7 @@ class StudyGroupOrchestrator:
             except Exception as e:
                 print(f"Error adding guest student via Admin token: {e}")
 
-        # CASE 3: 2 students qualify and NO active group exists -> Create Channel
+        # CASE 3: 3 students qualify and NO active group exists -> Create Channel
         else:
             try:
                 clean_topic = topic.replace(" ", "-")
@@ -126,11 +126,19 @@ class StudyGroupOrchestrator:
                         f"✨ *Study group created*\n\n"
                         f"🏷️ *Topic:* {topic.title()} basics\n"
                         f"👥 *Students:* {students_formatted}\n"
-                        f"📊 *Reason:* Each student asked multiple recent questions about {topic.title()} setup.\n"
+                        f"📊 *Reason:* 3 student asked multiple recent questions about {topic.title()} setup.\n"
                         f"🎯 *Purpose:* Fast follow-up and ad hoc help for today's {topic.title()} confusion.\n\n"
                         f"🔍 *Aggregated Backlog Material:*\n{history_logs}"
                     )
                     self.slack_service.post_admin_message(admin_report)
+
+                    if origin_channel_id:
+                        announcement_text = (
+                            f"📢 *New Study Lounge Alert!* 📢\n"
+                            f"A new public study group has just been spun up for *{topic.upper()}*! "
+                            f"Want to clear up bottlenecks together? Feel free to search and join in: <#{group_channel_id}>! 🚀"
+                        )
+                        self.slack_service.post_channel_message(origin_channel_id, announcement_text)
 
             except Exception as e:
                 print(f"Error creating channel: {e}")
