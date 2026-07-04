@@ -27,6 +27,31 @@ class SlackService:
         profile = response.get("user", {}).get("profile", {})
         return profile.get("title", "")
 
+    def is_bot_user(self, user_id):
+        response = self.bot_client.users_info(user=user_id)
+        return bool(response.get("user", {}).get("is_bot"))
+
+    def list_channel_members(self, channel_id):
+        members = []
+        cursor = None
+        while True:
+            response = self.bot_client.conversations_members(
+                channel=channel_id,
+                cursor=cursor,
+            )
+            members.extend(response.get("members", []))
+            cursor = response.get("response_metadata", {}).get("next_cursor")
+            if not cursor:
+                return members
+
+    def open_dm(self, user_id):
+        response = self.bot_client.conversations_open(users=user_id)
+        return response["channel"]["id"]
+
+    def post_dm(self, user_id, text):
+        channel_id = self.open_dm(user_id)
+        return self.post_message(channel_id, text)
+
     def download_file(self, url):
         request = Request(url, headers={"Authorization": f"Bearer {self.bot_token}"})
         with urlopen(request) as response:

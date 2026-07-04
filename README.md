@@ -53,10 +53,13 @@ Add Slack scopes:
 3. Scroll to **Scopes**.
 4. Under **Bot Token Scopes**, click **Add an OAuth Scope** and add:
 	   - `chat:write`
+	   - `channels:read`
 	   - `channels:history`
 	   - `files:read`
 	   - `canvases:write`
 	   - `users:read`
+	   - `im:write`
+	   - `reactions:read`
 5. Under **User Token Scopes**, click **Add an OAuth Scope** and add:
 	   - `search:read`
 6. Click **Reinstall to Workspace** so Slack applies the new scopes.
@@ -94,6 +97,7 @@ Subscribe the bot to:
 ```text
 message.channels
 message.im
+reaction_added
 ```
 
 Reinstall the Slack app after changing scopes or event subscriptions.

@@ -4,6 +4,7 @@ from flask import Flask
 
 from config import get_required_config
 from events.slack_events import active_search_polling_worker, handle_slack_event_payload
+from features.quiz_maker import QuizMaker
 from features.syllabus_compiler import SyllabusCompiler
 from features.study_groups import StudyGroupOrchestrator
 from services.ai_service import SyllabusAIService
@@ -37,11 +38,22 @@ syllabus_compiler = SyllabusCompiler(
     admin_slack_ids=config["ADMIN_SLACK_IDS"],
     course_channel_id=config["COURSE_CHANNEL_ID"],
 )
+quiz_maker = QuizMaker(
+    storage=storage,
+    slack_service=slack_service,
+    ai_service=ai_service,
+    course_channel_id=config["COURSE_CHANNEL_ID"],
+)
 
 
 @app.route("/slack/events", methods=["POST"])
 def slack_events():
-    return handle_slack_event_payload(storage, study_group_orchestrator, syllabus_compiler)
+    return handle_slack_event_payload(
+        storage,
+        study_group_orchestrator,
+        syllabus_compiler,
+        quiz_maker,
+    )
 
 
 if __name__ == "__main__":

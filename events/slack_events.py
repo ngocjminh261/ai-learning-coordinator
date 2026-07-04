@@ -5,7 +5,12 @@ from flask import jsonify, request
 from features.study_groups import classify_topic
 
 
-def handle_slack_event_payload(storage, study_group_orchestrator, syllabus_compiler=None):
+def handle_slack_event_payload(
+    storage,
+    study_group_orchestrator,
+    syllabus_compiler=None,
+    quiz_maker=None,
+):
     data = request.json
 
     if data and "challenge" in data:
@@ -14,10 +19,20 @@ def handle_slack_event_payload(storage, study_group_orchestrator, syllabus_compi
     if data and "event" in data:
         event = data["event"]
 
+        if event.get("type") == "reaction_added" and quiz_maker:
+            quiz_result = quiz_maker.handle_reaction_event(event)
+            if quiz_result.get("handled"):
+                return jsonify({"status": "ok"})
+
         if event.get("type") == "message" and not event.get("bot_id"):
             if syllabus_compiler:
                 syllabus_result = syllabus_compiler.handle_slack_file_event(event)
                 if syllabus_result.get("handled"):
+                    return jsonify({"status": "ok"})
+
+            if quiz_maker:
+                quiz_result = quiz_maker.handle_message_event(event)
+                if quiz_result.get("handled"):
                     return jsonify({"status": "ok"})
 
             message_text = event.get("text", "").strip()

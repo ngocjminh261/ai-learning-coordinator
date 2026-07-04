@@ -38,6 +38,23 @@ class SyllabusAIService:
 
         raise AIServiceError("; ".join(errors) or "No AI provider configured")
 
+    def generate_quiz_draft(self, topic, lecture_notes):
+        prompt = build_quiz_prompt(topic, lecture_notes)
+        errors = []
+
+        if self.gemini_api_key:
+            try:
+                return normalize_quiz_draft(topic, self._call_gemini(prompt))
+            except Exception as exc:
+                errors.append(f"Gemini failed: {exc}")
+
+        try:
+            return normalize_quiz_draft(topic, self._call_ollama(prompt))
+        except Exception as exc:
+            errors.append(f"Ollama failed: {exc}")
+
+        raise AIServiceError("; ".join(errors) or "No AI provider configured")
+
     def _call_gemini(self, prompt):
         model_name = quote(self.gemini_model, safe="")
         url = (
@@ -112,6 +129,47 @@ Syllabus text:
 """.strip()
 
 
+def build_quiz_prompt(topic, lecture_notes):
+    note_text = "\n\n".join(
+        note.get("text", "")
+        for note in lecture_notes
+        if note.get("text")
+    )
+    return f"""
+Create a low-stakes Slack quiz from these lecture notes.
+
+Return only valid JSON with this shape:
+{{
+  "topic": "{topic}",
+  "questions": [
+    {{
+      "text": "short question",
+      "choices": {{
+        "one": "answer choice",
+        "two": "answer choice",
+        "three": "answer choice"
+      }},
+      "correct_reaction": "one"
+    }}
+  ]
+}}
+
+Rules:
+- Create 2 or 3 questions.
+- Use only the lecture note content.
+- Keep each question concise.
+- Use exactly three choices per question.
+- The correct_reaction must be "one", "two", or "three".
+- Do not include explanations.
+
+Topic:
+{topic}
+
+Lecture notes:
+{note_text[:16000]}
+""".strip()
+
+
 def normalize_course_metadata(metadata):
     return {
         "course_name": _clean_string(metadata.get("course_name")) or "Not found in syllabus",
@@ -124,6 +182,53 @@ def normalize_course_metadata(metadata):
         or "Not found in syllabus",
         "ta_contacts": _clean_contact_entries(metadata.get("ta_contacts")),
         "ta_office_hours": _clean_office_hour_entries(metadata.get("ta_office_hours")),
+    }
+
+
+def normalize_quiz_draft(topic, draft):
+    questions = draft.get("questions") if isinstance(draft, dict) else None
+    if not isinstance(questions, list):
+        questions = []
+
+    normalized_questions = []
+    for index, question in enumerate(questions[:3], start=1):
+        if not isinstance(question, dict):
+            continue
+
+        text = _clean_string(question.get("text"))
+        choices = question.get("choices")
+        if not isinstance(choices, dict):
+            choices = {}
+
+        normalized_choices = {
+            "one": _clean_string(choices.get("one")),
+            "two": _clean_string(choices.get("two")),
+            "three": _clean_string(choices.get("three")),
+        }
+        correct_reaction = _clean_string(question.get("correct_reaction"))
+        if (
+            not text
+            or not all(normalized_choices.values())
+            or correct_reaction not in normalized_choices
+        ):
+            continue
+
+        normalized_questions.append(
+            {
+                "id": f"q{index}",
+                "text": text,
+                "choices": normalized_choices,
+                "correct_reaction": correct_reaction,
+            }
+        )
+
+    if len(normalized_questions) < 2:
+        raise AIServiceError("Quiz draft must include at least 2 valid questions")
+
+    return {
+        "topic": _clean_string(draft.get("topic")) if isinstance(draft, dict) else None
+        or topic,
+        "questions": normalized_questions,
     }
 
 
