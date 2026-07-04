@@ -348,7 +348,7 @@ def format_quiz_draft(draft):
 def format_student_quiz_intro(topic, question_count):
     return "\n".join(
         [
-            f"Quiz: {topic}",
+            f"*QUIZ: {topic}*",
             "",
             f"{question_count} questions. React to each question message with :one:, :two:, or :three:.",
         ]
@@ -359,8 +359,7 @@ def format_student_question(question, question_index, question_count):
     choices = question["choices"]
     return "\n".join(
         [
-            f"Question {question_index}/{question_count}:",
-            question["text"],
+            f"*_Question {question_index}/{question_count}: {question['text']}_*",
             "",
             f":one: {choices['one']}",
             f":two: {choices['two']}",

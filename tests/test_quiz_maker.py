@@ -192,10 +192,10 @@ def test_approve_sends_one_dm_per_question_to_non_staff_students(tmp_path):
         "USTUDENT2",
         "USTUDENT2",
     ]
-    assert "Quiz: EDA" in slack_service.dms[0]["text"]
+    assert "*QUIZ: EDA*" in slack_service.dms[0]["text"]
     assert "React to each question message" in slack_service.dms[0]["text"]
-    assert "Question 1/2" in slack_service.dms[1]["text"]
-    assert "Quiz: EDA" not in slack_service.dms[1]["text"]
+    assert "*_Question 1/2: What does EDA help analysts inspect?_*" in slack_service.dms[1]["text"]
+    assert "QUIZ: EDA" not in slack_service.dms[1]["text"]
     assert storage.get_quiz_draft("UINSTRUCTOR") is None
     active_quiz = next(iter(storage.get_active_quizzes().values()))
     assert len(active_quiz["sent_questions"]) == 4
@@ -340,7 +340,8 @@ def test_formatters_show_staff_and_student_versions():
 
     assert "Correct answer" in staff_text
     assert "Correct answer" not in student_text
-    assert "Quiz: EDA" in intro_text
+    assert "*QUIZ: EDA*" in intro_text
     assert "React to each question message" in intro_text
-    assert "Quiz: EDA" not in student_text
+    assert "QUIZ: EDA" not in student_text
+    assert "*_Question 1/2: What does EDA help analysts inspect?_*" in student_text
     assert "React with :one:" not in student_text
