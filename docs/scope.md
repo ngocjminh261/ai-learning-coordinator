@@ -14,6 +14,7 @@ Build a Slack-based AI Learning Coordinator demo that helps teachers spot confus
 ## MVP Features
 
 - **Study groups:** detect lagging students and suggest a small group. See `docs/feature-1-study-groups.md`.
+- **Lecture note prep:** collect topic-based lecture notes by DM so quiz generation has context. See `docs/feature-2a-lecture-notes.md`.
 - **Quiz maker:** create a private low-stakes quiz and summarize understanding. See `docs/feature-2-quiz-maker.md`.
 - **Course context + FAQ maker:** summarize syllabus material, then draft a reviewed FAQ or Slack canvas from repeated Slack questions. See `docs/feature-3-faq-bot.md`.
 

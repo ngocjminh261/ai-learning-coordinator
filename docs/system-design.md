@@ -18,6 +18,7 @@ events/
 
 features/
   study_groups.py
+  lecture_notes.py
   quiz_maker.py
   syllabus_compiler.py
   faq_bot.py
@@ -58,8 +59,18 @@ Instructor page
 ## Shared Services
 
 - `slack_service.py`: post messages, open DMs, create groups, invite students, fetch channel messages.
-- `ai_service.py`: summarize syllabus material, generate quiz drafts, summarize quiz answers, draft FAQ entries.
-- `storage_service.py`: store question counts, topic groups, course maps, quiz drafts, responses, and FAQ drafts.
+- `ai_service.py`: summarize syllabus material, generate lecture-note topic labels, generate quiz drafts, summarize quiz answers, draft FAQ entries.
+- `storage_service.py`: store question counts, topic groups, lecture notes, course maps, quiz drafts, responses, and FAQ drafts.
+
+## Staff Recognition
+
+For the hackathon demo, staff are Slack members whose profile title is exactly `Instructor` or `Teaching Assistant`.
+
+Use staff recognition to:
+
+- allow lecture-note and quiz commands
+- exclude staff from student quiz DMs
+- send quiz summaries back to the Instructor or Teaching Assistant
 
 ## Data Model
 
@@ -68,6 +79,8 @@ Start with inspectable JSON files for course maps and drafts. Move to SQLite onl
 Core records:
 
 - `StudentQuestion`: user, channel, text, topic, timestamp
+- `LectureNote`: text, topic, sender, channel, optional AI labels
+- `PendingAction`: user, state, optional topic or draft ID
 - `CourseMap`: channel, syllabus source, topics, modules, learning objectives
 - `StudyGroup`: topic, date, students, Slack group/channel ID, status
 - `Quiz`: topic, questions, recipients, responses, summary
@@ -76,6 +89,7 @@ Core records:
 ## Feature Boundaries
 
 - Study groups can run without AI by using the topic dictionary.
+- Lecture note prep stores topic-based class material for quiz context.
 - Quiz maker uses AI for draft questions and response summaries.
 - Syllabus compiler uses AI to create reusable course context.
 - FAQ maker uses AI for repeated-question clustering and syllabus-based grouping.

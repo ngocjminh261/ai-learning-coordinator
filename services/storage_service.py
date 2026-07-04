@@ -10,6 +10,7 @@ class InMemoryStorage:
         self.active_study_groups = {}
         self.course_state_path = Path(course_state_path)
         self.upload_tracking_lock = threading.Lock()
+        self.course_state_lock = threading.RLock()
         self.in_progress_uploads = set()
         self.completed_uploads = set()
 
@@ -68,8 +69,14 @@ class InMemoryStorage:
             json.dump(state, state_file, indent=2)
             state_file.write("\n")
 
+    def update_course_state(self, updates):
+        state = self.load_course_state()
+        state.update(updates)
+        self.save_course_state(state)
+        return state
+
     def save_course_canvas_state(self, course_map, canvas_id, channel_id):
-        state = {
+        updates = {
             "course_map": course_map,
             "faq_canvas": {
                 "canvas_id": canvas_id,
@@ -78,8 +85,7 @@ class InMemoryStorage:
                 "updated_at": course_map.get("created_at"),
             },
         }
-        self.save_course_state(state)
-        return state
+        return self.update_course_state(updates)
 
     def get_active_canvas_id(self):
         state = self.load_course_state()
@@ -103,3 +109,122 @@ class InMemoryStorage:
     def fail_upload(self, upload_key):
         with self.upload_tracking_lock:
             self.in_progress_uploads.discard(upload_key)
+
+    def save_lecture_note(self, topic, note_text, sender, channel):
+        note = {
+            "topic": topic,
+            "text": note_text,
+            "sender": sender,
+            "channel": channel,
+        }
+        state = self.load_course_state()
+        lecture_notes = state.setdefault("lecture_notes", [])
+        lecture_notes.append(note)
+        self.save_course_state(state)
+        return note
+
+    def get_lecture_notes(self):
+        return self.load_course_state().get("lecture_notes", [])
+
+    def get_lecture_note_topics(self):
+        topics = []
+        seen = set()
+        for note in self.get_lecture_notes():
+            topic = note.get("topic")
+            if topic and topic not in seen:
+                topics.append(topic)
+                seen.add(topic)
+        return topics
+
+    def get_notes_for_topic(self, topic):
+        return [
+            note
+            for note in self.get_lecture_notes()
+            if note.get("topic", "").casefold() == topic.casefold()
+        ]
+
+    def set_pending_action(self, user_id, state_name, **data):
+        state = self.load_course_state()
+        pending_actions = state.setdefault("pending_actions", {})
+        pending_actions[user_id] = {"state": state_name, **data}
+        self.save_course_state(state)
+        return pending_actions[user_id]
+
+    def get_pending_action(self, user_id):
+        return self.load_course_state().get("pending_actions", {}).get(user_id)
+
+    def clear_pending_action(self, user_id):
+        state = self.load_course_state()
+        pending_actions = state.setdefault("pending_actions", {})
+        pending_actions.pop(user_id, None)
+        self.save_course_state(state)
+
+    def save_quiz_draft(self, user_id, draft):
+        state = self.load_course_state()
+        quiz_drafts = state.setdefault("quiz_drafts", {})
+        quiz_drafts[user_id] = draft
+        self.save_course_state(state)
+        return draft
+
+    def get_quiz_draft(self, user_id):
+        return self.load_course_state().get("quiz_drafts", {}).get(user_id)
+
+    def clear_quiz_draft(self, user_id):
+        state = self.load_course_state()
+        quiz_drafts = state.setdefault("quiz_drafts", {})
+        quiz_drafts.pop(user_id, None)
+        self.save_course_state(state)
+
+    def pop_quiz_draft(self, user_id):
+        with self.course_state_lock:
+            state = self.load_course_state()
+            quiz_drafts = state.setdefault("quiz_drafts", {})
+            draft = quiz_drafts.pop(user_id, None)
+            self.save_course_state(state)
+            return draft
+
+    def save_active_quiz(self, quiz_id, quiz):
+        state = self.load_course_state()
+        active_quizzes = state.setdefault("active_quizzes", {})
+        active_quizzes[quiz_id] = quiz
+        owner = quiz.get("owner")
+        if owner:
+            current_quiz_by_owner = state.setdefault("current_quiz_by_owner", {})
+            current_quiz_by_owner[owner] = quiz_id
+        self.save_course_state(state)
+        return quiz
+
+    def get_active_quizzes(self):
+        return self.load_course_state().get("active_quizzes", {})
+
+    def get_current_quiz_for_owner(self, owner):
+        state = self.load_course_state()
+        quiz_id = state.get("current_quiz_by_owner", {}).get(owner)
+        if not quiz_id:
+            return None, None
+
+        quiz = state.get("active_quizzes", {}).get(quiz_id)
+        if not quiz:
+            return None, None
+
+        return quiz_id, quiz
+
+    def find_quiz_question_by_message(self, channel_id, message_ts):
+        for quiz_id, quiz in self.get_active_quizzes().items():
+            for question in quiz.get("sent_questions", []):
+                if question.get("channel") == channel_id and question.get("ts") == message_ts:
+                    return quiz_id, quiz, question
+        return None, None, None
+
+    def record_quiz_response(self, quiz_id, question_id, student_id, reaction):
+        state = self.load_course_state()
+        active_quizzes = state.setdefault("active_quizzes", {})
+        quiz = active_quizzes.get(quiz_id)
+        if not quiz:
+            return None
+
+        responses = quiz.setdefault("responses", {})
+        student_responses = responses.setdefault(student_id, {})
+        student_responses[question_id] = reaction
+        self.save_course_state(state)
+        return student_responses

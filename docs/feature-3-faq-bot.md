@@ -25,7 +25,7 @@ This should be saved so the FAQ maker can reuse the active canvas later.
 
 Testing MVP:
 
-1. Admin/professor DMs the bot a syllabus PDF.
+1. Instructor or Teaching Assistant DMs the bot a PDF named `syllabus.pdf`, or uploads a PDF with `syllabus` in the DM text.
 2. Bot extracts the essential student reference info.
 3. Bot creates a quick fact sheet canvas in the course channel.
 4. Bot saves the active canvas state for the next test upload.
@@ -52,7 +52,7 @@ The instructor reviews the draft before it is shared.
 
 ## MVP Behavior
 
-1. Instructor sends or uploads a syllabus.
+1. Instructor DMs the bot a syllabus PDF.
 2. Bot extracts a quick fact sheet for students.
 3. Instructor chooses a Slack channel and time window.
 4. Bot fetches recent channel messages.
