@@ -81,10 +81,7 @@ def active_search_polling_worker(storage, slack_service, study_group_orchestrato
                     if current_topic_count < 3:
                         new_count = storage.record_question(user_id, assigned_topic, message_text)
 
-                        print(f"\n🔍 --- SEARCH API REAL-TIME MATCH DETECTED ---")
-                        print(f"USER: <@{user_id}> | TOPIC: {assigned_topic.upper()} | COUNT: {new_count}")
-                        print(f"TEXT: \"{message_text}\"")
-                        print(f"-----------------------------------------------\n")
+                        print(f"🔍 [MATCH] User: {user_id} | Topic: {assigned_topic.upper()} | Count: {new_count} | Text: \"{message_text}\"")
 
                         if new_count == 3:
                             print(f"🚨 SEARCH API THRESHOLD: User <@{user_id}> hit 3 questions!")
