@@ -2,7 +2,6 @@ import random
 
 
 TOPIC_KEYWORDS = {
-    "docker": ["docker", "container", "compose", "image", "volume"],
     "slack api": ["slack", "bot", "token", "event", "scope"],
     "python env": ["python", "pip", "uv", "venv", "import"],
     "api basics": ["api", "endpoint", "request", "response", "json"],
@@ -79,7 +78,28 @@ class StudyGroupOrchestrator:
         # CASE 3: 3 students qualify and NO active group exists -> Create Channel
         else:
             try:
-                clean_topic = topic.replace(" ", "-")
+                clean_topic = topic.replace(" ", "-").lower()
+                prefix = f"lounge-{clean_topic}-"
+                
+                # CHECK IF A CHANNEL ALREADY EXISTS FOR THIS TOPIC
+                existing_channel_id = None
+                try:
+                    channels_response = self.slack_service.bot_client.conversations_list(
+                        types="public_channel",
+                        exclude_archived=True
+                    )
+                    if channels_response.get("ok"):
+                        for ch in channels_response.get("channels", []):
+                            if ch.get("name", "").startswith(prefix):
+                                existing_channel_id = ch.get("id")
+                                print(f"ℹ️ Found an existing active lounge for {topic.upper()}: <#{existing_channel_id}>")
+                                break
+                except Exception as list_err:
+                    print(f"Error scanning for existing channels: {list_err}")
+
+                if existing_channel_id:
+                    return
+                
                 channel_name = f"lounge-{clean_topic}-{random.randint(100, 999)}"
 
                 response = self.slack_service.create_public_channel(channel_name)
