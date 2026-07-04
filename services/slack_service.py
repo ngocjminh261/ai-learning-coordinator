@@ -52,6 +52,10 @@ class SlackService:
         channel_id = self.open_dm(user_id)
         return self.post_message(channel_id, text)
 
+    def get_message_reactions(self, channel_id, message_ts):
+        response = self.bot_client.reactions_get(channel=channel_id, timestamp=message_ts)
+        return response.get("message", {}).get("reactions", [])
+
     def download_file(self, url):
         request = Request(url, headers={"Authorization": f"Bearer {self.bot_token}"})
         with urlopen(request) as response:

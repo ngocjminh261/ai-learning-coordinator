@@ -159,6 +159,17 @@ class InMemoryStorage:
         pending_actions.pop(user_id, None)
         self.save_course_state(state)
 
+    def claim_processed_event(self, event_key):
+        with self.course_state_lock:
+            state = self.load_course_state()
+            processed_events = state.setdefault("processed_events", {})
+            if event_key in processed_events:
+                return False
+
+            processed_events[event_key] = True
+            self.save_course_state(state)
+            return True
+
     def save_quiz_draft(self, user_id, draft):
         state = self.load_course_state()
         quiz_drafts = state.setdefault("quiz_drafts", {})
@@ -228,3 +239,14 @@ class InMemoryStorage:
         student_responses[question_id] = reaction
         self.save_course_state(state)
         return student_responses
+
+    def replace_quiz_responses(self, quiz_id, responses):
+        state = self.load_course_state()
+        active_quizzes = state.setdefault("active_quizzes", {})
+        quiz = active_quizzes.get(quiz_id)
+        if not quiz:
+            return None
+
+        quiz["responses"] = responses
+        self.save_course_state(state)
+        return responses

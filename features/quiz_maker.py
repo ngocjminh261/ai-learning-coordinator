@@ -52,7 +52,11 @@ class QuizMaker:
             return self.regenerate_quiz(user_id, channel_id)
 
         if lowered == "quiz summary":
-            return self.send_quiz_summary(user_id, channel_id)
+            return self.send_quiz_summary(
+                user_id,
+                channel_id,
+                event.get("ts") or event.get("event_ts"),
+            )
 
         pending_action = self.storage.get_pending_action(user_id)
         if not pending_action:
@@ -196,10 +200,14 @@ class QuizMaker:
         recipients = self.get_student_recipients()
         sent_questions = []
         for recipient in recipients:
+            self.slack_service.post_dm(
+                recipient,
+                format_student_quiz_intro(draft["topic"], len(draft["questions"])),
+            )
             for question_index, question in enumerate(draft["questions"], start=1):
                 response = self.slack_service.post_dm(
                     recipient,
-                    format_student_question(draft["topic"], question, question_index, len(draft["questions"])),
+                    format_student_question(question, question_index, len(draft["questions"])),
                 )
                 sent_questions.append(
                     {
@@ -229,14 +237,50 @@ class QuizMaker:
         )
         return {"handled": True, "status": "sent_quiz", "quiz_id": quiz_id}
 
-    def send_quiz_summary(self, user_id, channel_id):
+    def send_quiz_summary(self, user_id, channel_id, event_ts=None):
+        if event_ts:
+            event_key = f"quiz-summary:{user_id}:{event_ts}"
+            if not self.storage.claim_processed_event(event_key):
+                return {"handled": True, "status": "duplicate_quiz_summary"}
+
         quiz_id, quiz = self.storage.get_current_quiz_for_owner(user_id)
         if not quiz:
             self.slack_service.post_message(channel_id, "No active quiz found yet.")
             return {"handled": True, "status": "no_active_quiz"}
 
+        self.refresh_quiz_responses_from_slack(quiz_id, quiz)
+        _, quiz = self.storage.get_current_quiz_for_owner(user_id)
         self.slack_service.post_message(channel_id, format_quiz_summary(quiz_id, quiz))
         return {"handled": True, "status": "sent_quiz_summary"}
+
+    def refresh_quiz_responses_from_slack(self, quiz_id, quiz):
+        refreshed_responses = {
+            student_id: dict(student_responses)
+            for student_id, student_responses in quiz.get("responses", {}).items()
+        }
+        valid_reactions = set(REACTION_LABELS)
+        for sent_question in quiz.get("sent_questions", []):
+            channel_id = sent_question.get("channel")
+            message_ts = sent_question.get("ts")
+            question_id = sent_question.get("id")
+            if not channel_id or not message_ts or not question_id:
+                continue
+
+            try:
+                reactions = self.slack_service.get_message_reactions(channel_id, message_ts)
+            except Exception as exc:
+                print(f"Could not fetch quiz reactions for {channel_id}/{message_ts}: {exc}")
+                continue
+
+            for reaction in reactions:
+                reaction_name = reaction.get("name")
+                if reaction_name not in valid_reactions:
+                    continue
+                for reacting_user in reaction.get("users", []):
+                    student_responses = refreshed_responses.setdefault(reacting_user, {})
+                    student_responses[question_id] = reaction_name
+
+        self.storage.replace_quiz_responses(quiz_id, refreshed_responses)
 
     def get_student_recipients(self):
         recipients = []
@@ -301,20 +345,26 @@ def format_quiz_draft(draft):
     )
 
 
-def format_student_question(topic, question, question_index, question_count):
-    choices = question["choices"]
+def format_student_quiz_intro(topic, question_count):
     return "\n".join(
         [
             f"Quiz: {topic}",
             "",
+            f"{question_count} questions. React to each question message with :one:, :two:, or :three:.",
+        ]
+    )
+
+
+def format_student_question(question, question_index, question_count):
+    choices = question["choices"]
+    return "\n".join(
+        [
             f"Question {question_index}/{question_count}:",
             question["text"],
             "",
             f":one: {choices['one']}",
             f":two: {choices['two']}",
             f":three: {choices['three']}",
-            "",
-            "React with :one:, :two:, or :three:.",
         ]
     )
 
