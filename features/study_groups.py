@@ -2,11 +2,12 @@ import random
 
 
 TOPIC_KEYWORDS = {
-    "slack api": ["slack", "bot", "token", "event", "scope"],
-    "python env": ["python", "pip", "uv", "venv", "import"],
-    "api basics": ["api", "endpoint", "request", "response", "json"],
+    "probability and statistics": ["distribution", "variance", "hypothesis", "p-value", "deviation", "probability", "bayes"],
+    "machine learning": ["regression", "classification", "overfitting", "training", "predict", "model", "supervised"],
+    "data preprocessing": ["pandas", "dataframe", "cleaning", "impute", "null", "outlier", "feature", "csv"],
+    "deep learning": ["neural", "weights", "layer", "epoch", "loss", "tensorflow", "pytorch", "gradient"],
+    "data visualization": ["matplotlib", "seaborn", "plot", "chart", "graph", "histogram", "scatter"]
 }
-
 
 def classify_topic(message_text):
     """Scans the text for dictionary keywords and returns the assigned topic name."""
