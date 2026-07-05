@@ -149,7 +149,7 @@ Return only valid JSON with this shape:
         "two": "answer choice",
         "three": "answer choice"
       }},
-      "correct_reaction": "one"
+      "correct_reaction": "one | two | three"
     }}
   ]
 }}
@@ -160,6 +160,10 @@ Rules:
 - Keep each question concise.
 - Use exactly three choices per question.
 - The correct_reaction must be "one", "two", or "three".
+- Vary the correct answer position across questions.
+- Do not always put the correct answer as "one".
+- For a 3-question quiz, use a mix of "one", "two", and "three" when possible.
+- For a 2-question quiz, avoid using the same correct_reaction for both questions when possible.
 - Do not include explanations.
 
 Topic:
