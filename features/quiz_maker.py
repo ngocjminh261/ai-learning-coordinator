@@ -69,7 +69,6 @@ class QuizMaker:
             return self.generate_quiz_from_topic_number(user_id, channel_id, text, pending_action)
 
         if pending_action.get("state") == "quiz_generating":
-            self.slack_service.post_message(channel_id, "⏳ Generating the quiz draft now...")
             return {"handled": True, "status": "quiz_generation_in_progress"}
 
         if pending_action.get("state") == "quiz_approval":
@@ -179,6 +178,7 @@ class QuizMaker:
             self.slack_service.post_message(channel_id, f"No lecture notes are saved for *{topic}* yet.")
             return {"handled": True, "status": "no_notes_for_topic"}
 
+        self.slack_service.post_message(channel_id, "⏳ Generating the quiz draft now...")
         draft = self.ai_service.generate_quiz_draft(topic, notes)
         self.storage.save_quiz_draft(user_id, draft)
         self.storage.set_pending_action(user_id, "quiz_approval", topic=topic)
@@ -190,13 +190,13 @@ class QuizMaker:
         if not draft:
             pending_action = self.storage.get_pending_action(user_id)
             if pending_action and pending_action.get("state") == "quiz_sending":
-                self.slack_service.post_message(channel_id, "📤 Sending quiz...")
                 return {"handled": True, "status": "quiz_send_in_progress"}
 
             self.slack_service.post_message(channel_id, "No quiz draft is ready to approve. Please send `quiz` first.")
             return {"handled": True, "status": "no_draft_to_approve"}
 
         self.storage.set_pending_action(user_id, "quiz_sending", topic=draft["topic"])
+        self.slack_service.post_message(channel_id, "📤 Sending quiz...")
         recipients = self.get_student_recipients()
         sent_questions = []
         for recipient in recipients:

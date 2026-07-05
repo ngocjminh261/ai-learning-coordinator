@@ -147,7 +147,8 @@ def test_quiz_topic_selection_generates_draft(tmp_path):
     draft_result = quiz_maker.handle_message_event(message_event("1"))
 
     assert topic_result["status"] == "waiting_for_quiz_topic_number"
-    assert "1. EDA" in slack_service.messages[-2]["text"]
+    assert "1. EDA" in slack_service.messages[-3]["text"]
+    assert "⏳ Generating the quiz draft now..." in slack_service.messages[-2]["text"]
     assert draft_result["status"] == "sent_quiz_draft"
     assert ai_service.calls[0]["topic"] == "EDA"
     assert storage.get_pending_action("UINSTRUCTOR")["state"] == "quiz_approval"
@@ -174,7 +175,13 @@ def test_duplicate_topic_number_does_not_generate_draft_twice(tmp_path):
         for message in slack_service.messages
         if message["text"].startswith("🧪 Draft quiz")
     ]
+    progress_messages = [
+        message
+        for message in slack_service.messages
+        if message["text"] == "⏳ Generating the quiz draft now..."
+    ]
     assert len(draft_previews) == 1
+    assert len(progress_messages) == 1
 
 
 def test_approve_sends_one_dm_per_question_to_non_staff_students(tmp_path):
@@ -184,6 +191,7 @@ def test_approve_sends_one_dm_per_question_to_non_staff_students(tmp_path):
     result = quiz_maker.handle_message_event(message_event("approve"))
 
     assert result["status"] == "sent_quiz"
+    assert "📤 Sending quiz..." in slack_service.messages[0]["text"]
     assert [dm["user"] for dm in slack_service.dms] == [
         "USTUDENT1",
         "USTUDENT1",
@@ -229,7 +237,12 @@ def test_duplicate_approve_during_send_reports_in_progress(tmp_path):
     assert first_result["status"] == "sent_quiz"
     assert duplicate_result["status"] == "quiz_send_in_progress"
     assert len(slack_service.dms) == 6
-    assert "📤 Sending quiz..." in slack_service.messages[0]["text"]
+    sending_messages = [
+        message
+        for message in slack_service.messages
+        if message["text"] == "📤 Sending quiz..."
+    ]
+    assert len(sending_messages) == 1
 
 
 def test_reaction_event_records_response_and_summary(tmp_path):
