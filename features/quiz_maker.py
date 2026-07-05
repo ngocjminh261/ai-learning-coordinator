@@ -7,6 +7,14 @@ REACTION_LABELS = {
     "three": ":three:",
 }
 
+BAR_BLOCKS = {
+    "one": "🟩",
+    "two": "🟦",
+    "three": "🟨",
+}
+
+SUMMARY_BAR_MAX_BLOCKS = 8
+
 
 class QuizMaker:
     def __init__(self, storage, slack_service, ai_service, course_channel_id):
@@ -178,7 +186,7 @@ class QuizMaker:
             self.slack_service.post_message(channel_id, f"No lecture notes are saved for *{topic}* yet.")
             return {"handled": True, "status": "no_notes_for_topic"}
 
-        self.slack_service.post_message(channel_id, "⏳ Generating the quiz draft now...")
+        self.slack_service.post_message(channel_id, "⏳ Generating the quiz draft...")
         draft = self.ai_service.generate_quiz_draft(topic, notes)
         self.storage.save_quiz_draft(user_id, draft)
         self.storage.set_pending_action(user_id, "quiz_approval", topic=topic)
@@ -364,6 +372,8 @@ def format_student_question(question, question_index, question_count):
             f":one: {choices['one']}",
             f":two: {choices['two']}",
             f":three: {choices['three']}",
+            "",
+            "────────────────────",
         ]
     )
 
@@ -372,26 +382,116 @@ def format_quiz_summary(quiz_id, quiz):
     responses = quiz.get("responses", {})
     recipients = quiz.get("recipients", [])
     questions = quiz.get("questions", [])
+    topic = quiz.get("topic", "Unknown topic")
+    metrics = calculate_quiz_summary_metrics(quiz)
     lines = [
-        f"📊 Quiz summary: *{quiz.get('topic', 'Unknown topic')}*",
-        "Scope: latest sent quiz",
+        f"📊 Quiz summary: *{topic}*",
         "",
-        f"Responses: {len(responses)}/{len(recipients)}",
+        f"✅ Overall accuracy: {format_accuracy(metrics['accuracy'])}",
+        f"👥 Responses: {len(responses)}/{len(recipients)} students",
+        format_quiz_interpretation(topic, metrics),
     ]
 
-    for question in questions:
-        counts = {"one": 0, "two": 0, "three": 0}
-        for student_responses in responses.values():
-            reaction = student_responses.get(question["id"])
-            if reaction in counts:
-                counts[reaction] += 1
-        correct = question.get("correct_reaction")
-        lines.append(
-            f"{question['id']}: {REACTION_LABELS['one']} {counts['one']} | "
-            f"{REACTION_LABELS['two']} {counts['two']} | "
-            f"{REACTION_LABELS['three']} {counts['three']} "
-            f"(correct: {REACTION_LABELS.get(correct, correct)})"
+    if metrics["submitted_answers"] > 0:
+        lines.extend(
+            [
+                "",
+                "────────────────────",
+                "Question breakdown:",
+            ]
         )
 
-    lines.append(f"Quiz ID: {quiz_id}")
+        for index, question in enumerate(questions, start=1):
+            counts = count_question_reactions(question, responses)
+            correct = question.get("correct_reaction")
+            choices = question.get("choices", {})
+            question_lines = [
+                "",
+                f"Q{index}. {question.get('text', 'Question text unavailable')}",
+                f"Correct: {REACTION_LABELS.get(correct, correct)} {choices.get(correct, '')}".rstrip(),
+            ]
+            for reaction_name in REACTION_LABELS:
+                question_lines.append(format_reaction_bar(reaction_name, counts[reaction_name]))
+            lines.extend(question_lines)
+
+    lines.extend(
+        [
+            "",
+            f"Quiz ID: {quiz_id}",
+        ]
+    )
     return "\n".join(lines)
+
+
+def calculate_quiz_summary_metrics(quiz):
+    responses = quiz.get("responses", {})
+    questions = quiz.get("questions", [])
+    correct_by_question = {
+        question.get("id"): question.get("correct_reaction")
+        for question in questions
+    }
+    submitted_answers = 0
+    correct_answers = 0
+
+    for student_responses in responses.values():
+        for question_id, reaction in student_responses.items():
+            if question_id not in correct_by_question:
+                continue
+
+            submitted_answers += 1
+            if reaction == correct_by_question[question_id]:
+                correct_answers += 1
+
+    accuracy = None
+    if submitted_answers:
+        accuracy = correct_answers / submitted_answers
+
+    return {
+        "submitted_answers": submitted_answers,
+        "correct_answers": correct_answers,
+        "accuracy": accuracy,
+    }
+
+
+def format_accuracy(accuracy):
+    if accuracy is None:
+        return "No responses yet"
+
+    return f"{round(accuracy * 100)}%"
+
+
+def format_quiz_interpretation(topic, metrics):
+    accuracy = metrics["accuracy"]
+    if accuracy is None:
+        return "No student responses yet. Try again after students react to the quiz messages."
+
+    if accuracy < 0.6:
+        return f"⚠️ Many students struggled with *{topic}*. This topic may need a revisit."
+
+    if accuracy < 0.8:
+        return f"🟡 Students have a developing grasp of *{topic}*. A short review may help."
+
+    return f"✅ Students generally have a good grasp of *{topic}*."
+
+
+def count_question_reactions(question, responses):
+    counts = {"one": 0, "two": 0, "three": 0}
+    question_id = question.get("id")
+    for student_responses in responses.values():
+        reaction = student_responses.get(question_id)
+        if reaction in counts:
+            counts[reaction] += 1
+
+    return counts
+
+
+def format_reaction_bar(reaction_name, count):
+    return f"{REACTION_LABELS[reaction_name]} {build_emoji_bar(reaction_name, count)} {count}"
+
+
+def build_emoji_bar(reaction_name, count):
+    if count <= 0:
+        return "⬜"
+
+    block_count = min(count, SUMMARY_BAR_MAX_BLOCKS)
+    return BAR_BLOCKS[reaction_name] * block_count

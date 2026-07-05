@@ -64,7 +64,7 @@ Please reply with one of the listed topic numbers.
 ### Quiz draft is already generating
 
 ```text
-⏳ Generating the quiz draft now...
+⏳ Generating the quiz draft...
 ```
 
 ### No lecture notes found for selected topic
@@ -135,14 +135,30 @@ No active quiz found yet.
 
 ```text
 📊 Quiz summary: *<topic>*
-Scope: latest sent quiz
 
-Responses: <responded count>/<student count>
-q1: :one: <count> | :two: <count> | :three: <count> (correct: :one:)
-q2: :one: <count> | :two: <count> | :three: <count> (correct: :two:)
-q3: :one: <count> | :two: <count> | :three: <count> (correct: :three:)
+✅ Overall accuracy: <accuracy percent>
+👥 Responses: <responded count>/<student count> students
+<teaching recommendation>
+
+────────────────────
+Question breakdown:
+
+Q1. <question text>
+Correct: :one: <choice text>
+:one: 🟩🟩🟩 <count>
+:two: 🟦 <count>
+:three: ⬜ 0
+
+Q2. <question text>
+Correct: :two: <choice text>
+:one: 🟩 <count>
+:two: 🟦🟦🟦 <count>
+:three: ⬜ 0
+
 Quiz ID: <quiz id>
 ```
+
+If there are no student responses yet, omit the divider and question breakdown.
 
 ## Quiz Feature: Student DMs
 
@@ -162,6 +178,8 @@ Please answer <question count> questions by reacting to each question message wi
 :one: <choice one>
 :two: <choice two>
 :three: <choice three>
+
+────────────────────
 ```
 
 ```text
@@ -170,6 +188,8 @@ Please answer <question count> questions by reacting to each question message wi
 :one: <choice one>
 :two: <choice two>
 :three: <choice three>
+
+────────────────────
 ```
 
 ```text
@@ -178,6 +198,8 @@ Please answer <question count> questions by reacting to each question message wi
 :one: <choice one>
 :two: <choice two>
 :three: <choice three>
+
+────────────────────
 ```
 
 ## Syllabus / Canvas Feature: Instructor / Teaching Assistant

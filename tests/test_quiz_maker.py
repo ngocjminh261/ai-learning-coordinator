@@ -1,5 +1,6 @@
 from features.quiz_maker import (
     QuizMaker,
+    format_quiz_summary,
     format_quiz_draft,
     format_student_quiz_intro,
     format_student_question,
@@ -148,7 +149,7 @@ def test_quiz_topic_selection_generates_draft(tmp_path):
 
     assert topic_result["status"] == "waiting_for_quiz_topic_number"
     assert "1. EDA" in slack_service.messages[-3]["text"]
-    assert "⏳ Generating the quiz draft now..." in slack_service.messages[-2]["text"]
+    assert "⏳ Generating the quiz draft..." in slack_service.messages[-2]["text"]
     assert draft_result["status"] == "sent_quiz_draft"
     assert ai_service.calls[0]["topic"] == "EDA"
     assert storage.get_pending_action("UINSTRUCTOR")["state"] == "quiz_approval"
@@ -178,7 +179,7 @@ def test_duplicate_topic_number_does_not_generate_draft_twice(tmp_path):
     progress_messages = [
         message
         for message in slack_service.messages
-        if message["text"] == "⏳ Generating the quiz draft now..."
+        if message["text"] == "⏳ Generating the quiz draft..."
     ]
     assert len(draft_previews) == 1
     assert len(progress_messages) == 1
@@ -203,6 +204,7 @@ def test_approve_sends_one_dm_per_question_to_non_staff_students(tmp_path):
     assert "🧠 *QUIZ: EDA*" in slack_service.dms[0]["text"]
     assert "Please answer 2 questions" in slack_service.dms[0]["text"]
     assert "*_Question 1/2: What does EDA help analysts inspect?_*" in slack_service.dms[1]["text"]
+    assert ":three: Server uptime\n\n────────────────────" in slack_service.dms[1]["text"]
     assert "QUIZ: EDA" not in slack_service.dms[1]["text"]
     assert storage.get_quiz_draft("UINSTRUCTOR") is None
     active_quiz = next(iter(storage.get_active_quizzes().values()))
@@ -268,8 +270,14 @@ def test_reaction_event_records_response_and_summary(tmp_path):
 
     assert reaction_result["status"] == "recorded_quiz_response"
     assert summary_result["status"] == "sent_quiz_summary"
-    assert "Responses: 1/2" in slack_service.messages[-1]["text"]
-    assert "q1: :one: 1" in slack_service.messages[-1]["text"]
+    assert "✅ Overall accuracy: 100%" in slack_service.messages[-1]["text"]
+    assert "👥 Responses: 1/2 students" in slack_service.messages[-1]["text"]
+    assert "✅ Students generally have a good grasp of *EDA*." in slack_service.messages[-1]["text"]
+    assert "────────────────────\nQuestion breakdown:" in slack_service.messages[-1]["text"]
+    assert "Q1. What does EDA help analysts inspect?" in slack_service.messages[-1]["text"]
+    assert "Correct: :one: Data patterns" in slack_service.messages[-1]["text"]
+    assert ":one: 🟩 1" in slack_service.messages[-1]["text"]
+    assert ":two: ⬜ 0" in slack_service.messages[-1]["text"]
 
 
 def test_summary_refreshes_responses_from_slack_reactions(tmp_path):
@@ -287,7 +295,7 @@ def test_summary_refreshes_responses_from_slack_reactions(tmp_path):
     summary_result = quiz_maker.handle_message_event(message_event("quiz summary"))
 
     assert summary_result["status"] == "sent_quiz_summary"
-    assert "Responses: 1/2" in slack_service.messages[-1]["text"]
+    assert "👥 Responses: 1/2 students" in slack_service.messages[-1]["text"]
     current_quiz_id, current_quiz = storage.get_current_quiz_for_owner("UINSTRUCTOR")
     assert current_quiz["responses"]["USTUDENT1"]["q1"] == "one"
 
@@ -344,6 +352,66 @@ def test_duplicate_quiz_summary_event_is_ignored(tmp_path):
     assert len(summary_messages) == 1
 
 
+def test_quiz_summary_recommends_revisit_under_sixty_percent():
+    draft = FakeAIService().generate_quiz_draft("EDA", [])
+    quiz = {
+        "topic": "EDA",
+        "questions": draft["questions"],
+        "recipients": ["USTUDENT1", "USTUDENT2"],
+        "responses": {
+            "USTUDENT1": {"q1": "two", "q2": "one"},
+            "USTUDENT2": {"q1": "one", "q2": "three"},
+        },
+    }
+
+    summary = format_quiz_summary("quiz-1", quiz)
+
+    assert "✅ Overall accuracy: 25%" in summary
+    assert "⚠️ Many students struggled with *EDA*. This topic may need a revisit." in summary
+    assert "────────────────────\nQuestion breakdown:" in summary
+    assert ":one: 🟩 1" in summary
+    assert ":two: 🟦 1" in summary
+    assert ":three: ⬜ 0" in summary
+
+
+def test_quiz_summary_recommends_short_review_for_developing_grasp():
+    draft = FakeAIService().generate_quiz_draft("EDA", [])
+    quiz = {
+        "topic": "EDA",
+        "questions": draft["questions"],
+        "recipients": ["USTUDENT1", "USTUDENT2"],
+        "responses": {
+            "USTUDENT1": {"q1": "one", "q2": "two"},
+            "USTUDENT2": {"q1": "one", "q2": "three"},
+        },
+    }
+
+    summary = format_quiz_summary("quiz-1", quiz)
+
+    assert "✅ Overall accuracy: 75%" in summary
+    assert "🟡 Students have a developing grasp of *EDA*. A short review may help." in summary
+
+
+def test_quiz_summary_handles_no_responses():
+    draft = FakeAIService().generate_quiz_draft("EDA", [])
+    quiz = {
+        "topic": "EDA",
+        "questions": draft["questions"],
+        "recipients": ["USTUDENT1", "USTUDENT2"],
+        "responses": {},
+    }
+
+    summary = format_quiz_summary("quiz-1", quiz)
+
+    assert "✅ Overall accuracy: No responses yet" in summary
+    assert "👥 Responses: 0/2 students" in summary
+    assert "No student responses yet. Try again after students react to the quiz messages." in summary
+    assert "Question breakdown:" not in summary
+    assert "Q1." not in summary
+    assert ":one: ⬜ 0" not in summary
+    assert "Quiz ID: quiz-1" in summary
+
+
 def test_formatters_show_staff_and_student_versions():
     draft = FakeAIService().generate_quiz_draft("EDA", [])
 
@@ -357,4 +425,5 @@ def test_formatters_show_staff_and_student_versions():
     assert "Please answer 2 questions" in intro_text
     assert "QUIZ: EDA" not in student_text
     assert "*_Question 1/2: What does EDA help analysts inspect?_*" in student_text
+    assert ":three: Server uptime\n\n────────────────────" in student_text
     assert "React with :one:" not in student_text

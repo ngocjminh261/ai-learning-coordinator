@@ -122,7 +122,9 @@ def test_build_quiz_prompt_includes_topic_and_notes():
 
     assert "EDA" in prompt
     assert "Histograms show numeric distributions." in prompt
-    assert '"correct_reaction": "one"' in prompt
+    assert '"correct_reaction": "one | two | three"' in prompt
+    assert "Vary the correct answer position across questions." in prompt
+    assert 'Do not always put the correct answer as "one".' in prompt
 
 
 def test_normalize_quiz_draft_accepts_valid_questions():
