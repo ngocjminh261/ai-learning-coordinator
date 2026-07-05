@@ -40,6 +40,21 @@ def get_required_config():
             "COURSE_STATE_STORAGE_PATH",
             "data/course_state.json",
         ),
+        "GOOGLE_DRIVE_MCP_SERVER_URL": os.environ.get(
+            "GOOGLE_DRIVE_MCP_SERVER_URL",
+            "https://drivemcp.googleapis.com/mcp/v1",
+        ),
+        "GOOGLE_OAUTH_CLIENT_ID": os.environ.get("GOOGLE_OAUTH_CLIENT_ID"),
+        "GOOGLE_OAUTH_CLIENT_SECRET": os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET"),
+        "GOOGLE_OAUTH_REDIRECT_URI": os.environ.get(
+            "GOOGLE_OAUTH_REDIRECT_URI",
+            "http://localhost:8080/google/oauth/callback",
+        ),
+        "GOOGLE_OAUTH_TOKEN_PATH": os.environ.get(
+            "GOOGLE_OAUTH_TOKEN_PATH",
+            "data/google_oauth_token.json",
+        ),
+        "GOOGLE_DRIVE_LECTURE_FILE_ID": os.environ.get("GOOGLE_DRIVE_LECTURE_FILE_ID"),
         "PORT": int(os.environ.get("PORT", 8080)),
     }
 

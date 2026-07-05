@@ -1,6 +1,6 @@
 import threading
 
-from flask import Flask
+from flask import Flask, redirect, request
 
 from config import get_required_config
 from events.slack_events import active_search_polling_worker, handle_slack_event_payload
@@ -8,6 +8,11 @@ from features.quiz_maker import QuizMaker
 from features.syllabus_compiler import SyllabusCompiler
 from features.study_groups import StudyGroupOrchestrator
 from services.ai_service import SyllabusAIService
+from services.google_drive_mcp_service import (
+    GoogleDriveMCPService,
+    GoogleDriveOAuthError,
+    GoogleDriveOAuthService,
+)
 from services.slack_service import SlackService
 from services.storage_service import InMemoryStorage
 
@@ -30,6 +35,17 @@ ai_service = SyllabusAIService(
     ollama_base_url=config["OLLAMA_BASE_URL"],
     ollama_model=config["OLLAMA_MODEL"],
 )
+google_drive_oauth_service = GoogleDriveOAuthService(
+    client_id=config["GOOGLE_OAUTH_CLIENT_ID"],
+    client_secret=config["GOOGLE_OAUTH_CLIENT_SECRET"],
+    redirect_uri=config["GOOGLE_OAUTH_REDIRECT_URI"],
+    token_path=config["GOOGLE_OAUTH_TOKEN_PATH"],
+)
+google_drive_mcp_service = GoogleDriveMCPService(
+    oauth_service=google_drive_oauth_service,
+    server_url=config["GOOGLE_DRIVE_MCP_SERVER_URL"],
+    lecture_file_id=config["GOOGLE_DRIVE_LECTURE_FILE_ID"],
+)
 study_group_orchestrator = StudyGroupOrchestrator(
     storage, 
     slack_service, 
@@ -47,6 +63,7 @@ quiz_maker = QuizMaker(
     slack_service=slack_service,
     ai_service=ai_service,
     course_channel_id=config["COURSE_CHANNEL_ID"],
+    drive_service=google_drive_mcp_service,
 )
 
 
@@ -58,6 +75,27 @@ def slack_events():
         syllabus_compiler,
         quiz_maker,
     )
+
+
+@app.route("/google/oauth/start", methods=["GET"])
+def google_oauth_start():
+    try:
+        return redirect(google_drive_oauth_service.build_authorization_url())
+    except GoogleDriveOAuthError as exc:
+        return str(exc), 500
+
+
+@app.route("/google/oauth/callback", methods=["GET"])
+def google_oauth_callback():
+    if request.args.get("error"):
+        return f"Google OAuth failed: {request.args['error']}", 400
+
+    try:
+        google_drive_oauth_service.exchange_code_for_token(request.args.get("code"))
+    except GoogleDriveOAuthError as exc:
+        return f"Could not save Google OAuth token: {exc}", 500
+
+    return "Google Drive OAuth connected. You can close this tab."
 
 
 if __name__ == "__main__":

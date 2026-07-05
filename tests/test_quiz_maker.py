@@ -90,7 +90,32 @@ class FakeAIService:
         }
 
 
-def build_quiz_maker(tmp_path):
+class FakeDriveService:
+    def __init__(self):
+        self.files = [
+            {
+                "id": "drive-file-1",
+                "title": "Week 2 Prompting",
+                "mimeType": "application/vnd.google-apps.document",
+                "viewUrl": "https://drive.google.com/file/d/drive-file-1",
+            }
+        ]
+        self.content_by_file_id = {
+            "drive-file-1": (
+                "Topic: Prompting Fundamentals\n"
+                "Note:\n"
+                "Prompting means giving the model clear task context."
+            ),
+        }
+
+    def list_recent_files(self, page_size=5):
+        return self.files[:page_size]
+
+    def read_file_content(self, file_id):
+        return self.content_by_file_id[file_id]
+
+
+def build_quiz_maker(tmp_path, drive_service=None):
     storage = InMemoryStorage(course_state_path=tmp_path / "course_state.json")
     slack_service = FakeSlackService()
     ai_service = FakeAIService()
@@ -99,6 +124,7 @@ def build_quiz_maker(tmp_path):
         slack_service=slack_service,
         ai_service=ai_service,
         course_channel_id="CCOURSE",
+        drive_service=drive_service,
     )
     return quiz_maker, storage, slack_service, ai_service
 
@@ -129,15 +155,76 @@ def test_lecture_note_command_stores_structured_note(tmp_path):
     quiz_maker, storage, slack_service, ai_service = build_quiz_maker(tmp_path)
 
     start_result = quiz_maker.handle_message_event(message_event("lecture note"))
+    source_result = quiz_maker.handle_message_event(message_event("1"))
     save_result = quiz_maker.handle_message_event(
         message_event("Topic: EDA\nNote:\nHistograms show distributions.")
     )
 
-    assert start_result["status"] == "waiting_for_lecture_note"
+    assert start_result["status"] == "waiting_for_lecture_note_source"
+    assert source_result["status"] == "waiting_for_lecture_note"
     assert save_result["status"] == "saved_lecture_note"
     assert storage.get_lecture_note_topics() == ["EDA"]
     assert storage.get_pending_action("UINSTRUCTOR") is None
     assert "Saved lecture note" in slack_service.messages[-1]["text"]
+
+
+def test_lecture_note_command_imports_drive_file(tmp_path):
+    drive_service = FakeDriveService()
+    quiz_maker, storage, slack_service, ai_service = build_quiz_maker(
+        tmp_path,
+        drive_service=drive_service,
+    )
+
+    start_result = quiz_maker.handle_message_event(message_event("lecture note"))
+    source_result = quiz_maker.handle_message_event(message_event("2"))
+    import_result = quiz_maker.handle_message_event(message_event("1", ts="123.456"))
+
+    notes = storage.get_lecture_notes()
+    assert start_result["status"] == "waiting_for_lecture_note_source"
+    assert source_result["status"] == "waiting_for_drive_file_number"
+    assert import_result["status"] == "imported_drive_lecture_note"
+    assert notes[0]["topic"] == "Prompting Fundamentals"
+    assert notes[0]["text"] == "Prompting means giving the model clear task context."
+    assert notes[0]["source"]["type"] == "google_drive_mcp"
+    assert storage.get_pending_action("UINSTRUCTOR") is None
+    assert "Imported Google Drive file" in slack_service.messages[-1]["text"]
+
+
+def test_duplicate_drive_import_event_does_not_save_or_post_twice(tmp_path):
+    drive_service = FakeDriveService()
+    quiz_maker, storage, slack_service, ai_service = build_quiz_maker(
+        tmp_path,
+        drive_service=drive_service,
+    )
+
+    quiz_maker.handle_message_event(message_event("lecture note"))
+    quiz_maker.handle_message_event(message_event("2"))
+    pending_action = storage.get_pending_action("UINSTRUCTOR")
+
+    first_result = quiz_maker.import_drive_lecture_note(
+        "UINSTRUCTOR",
+        "DINSTRUCTOR",
+        "1",
+        pending_action,
+        event_ts="123.456",
+    )
+    second_result = quiz_maker.import_drive_lecture_note(
+        "UINSTRUCTOR",
+        "DINSTRUCTOR",
+        "1",
+        pending_action,
+        event_ts="123.456",
+    )
+
+    import_messages = [
+        message
+        for message in slack_service.messages
+        if "Imported Google Drive file" in message["text"]
+    ]
+    assert first_result["status"] == "imported_drive_lecture_note"
+    assert second_result["status"] == "duplicate_drive_import"
+    assert len(storage.get_lecture_notes()) == 1
+    assert len(import_messages) == 1
 
 
 def test_quiz_topic_selection_generates_draft(tmp_path):

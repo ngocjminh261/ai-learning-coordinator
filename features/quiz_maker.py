@@ -17,11 +17,12 @@ SUMMARY_BAR_MAX_BLOCKS = 8
 
 
 class QuizMaker:
-    def __init__(self, storage, slack_service, ai_service, course_channel_id):
+    def __init__(self, storage, slack_service, ai_service, course_channel_id, drive_service=None):
         self.storage = storage
         self.slack_service = slack_service
         self.ai_service = ai_service
         self.course_channel_id = course_channel_id
+        self.drive_service = drive_service
 
     def handle_message_event(self, event):
         if event.get("type") != "message" or event.get("bot_id"):
@@ -43,12 +44,12 @@ class QuizMaker:
                 return {"handled": True, "status": "rejected_non_staff"}
 
         if lowered == "lecture note":
-            self.storage.set_pending_action(user_id, "lecture_note")
+            self.storage.set_pending_action(user_id, "lecture_note_source")
             self.slack_service.post_message(
                 channel_id,
-                "📝 Please send the lecture note using this format:\n\nTopic: <topic>\nNote:\n<note text>",
+                format_lecture_note_source_prompt(),
             )
-            return {"handled": True, "status": "waiting_for_lecture_note"}
+            return {"handled": True, "status": "waiting_for_lecture_note_source"}
 
         if lowered == "quiz":
             return self.start_quiz_topic_selection(user_id, channel_id)
@@ -73,6 +74,18 @@ class QuizMaker:
         if pending_action.get("state") == "lecture_note":
             return self.save_lecture_note_from_message(user_id, channel_id, text)
 
+        if pending_action.get("state") == "lecture_note_source":
+            return self.handle_lecture_note_source_choice(user_id, channel_id, text)
+
+        if pending_action.get("state") == "drive_lecture_note_file_number":
+            return self.import_drive_lecture_note(
+                user_id,
+                channel_id,
+                text,
+                pending_action,
+                event.get("ts") or event.get("event_ts"),
+            )
+
         if pending_action.get("state") == "quiz_topic_number":
             return self.generate_quiz_from_topic_number(user_id, channel_id, text, pending_action)
 
@@ -84,6 +97,48 @@ class QuizMaker:
             return {"handled": True, "status": "unexpected_quiz_approval_reply"}
 
         return {"handled": False}
+
+    def handle_lecture_note_source_choice(self, user_id, channel_id, text):
+        choice = text.strip()
+        if choice == "1":
+            self.storage.set_pending_action(user_id, "lecture_note")
+            self.slack_service.post_message(
+                channel_id,
+                "📝 Please send the lecture note using this format:\n\nTopic: <topic>\nNote:\n<note text>",
+            )
+            return {"handled": True, "status": "waiting_for_lecture_note"}
+
+        if choice == "2":
+            if not self.drive_service:
+                self.slack_service.post_message(
+                    channel_id,
+                    "Google Drive import is not configured yet.",
+                )
+                return {"handled": True, "status": "drive_import_not_configured"}
+
+            try:
+                files = self.drive_service.list_recent_files(page_size=5)
+            except Exception as exc:
+                self.slack_service.post_message(
+                    channel_id,
+                    f"Could not list Google Drive files through MCP: {exc}",
+                )
+                return {"handled": True, "status": "drive_file_list_failed"}
+
+            if not files:
+                self.slack_service.post_message(channel_id, "No recent Google Drive files found.")
+                return {"handled": True, "status": "no_drive_files"}
+
+            self.storage.set_pending_action(
+                user_id,
+                "drive_lecture_note_file_number",
+                drive_files=files,
+            )
+            self.slack_service.post_message(channel_id, format_drive_file_list(files))
+            return {"handled": True, "status": "waiting_for_drive_file_number"}
+
+        self.slack_service.post_message(channel_id, "Please reply `1` or `2`.")
+        return {"handled": True, "status": "invalid_lecture_note_source"}
 
     def handle_reaction_event(self, event):
         if event.get("type") != "reaction_added":
@@ -149,6 +204,63 @@ class QuizMaker:
             f"✅ Saved lecture note for *{note['topic']}*. Please send `quiz` when you are ready.",
         )
         return {"handled": True, "status": "saved_lecture_note"}
+
+    def import_drive_lecture_note(self, user_id, channel_id, text, pending_action, event_ts=None):
+        try:
+            selected_index = int(text.strip()) - 1
+        except ValueError:
+            self.slack_service.post_message(channel_id, "Please reply with the Drive file number.")
+            return {"handled": True, "status": "invalid_drive_file_number"}
+
+        files = pending_action.get("drive_files", [])
+        if selected_index < 0 or selected_index >= len(files):
+            self.slack_service.post_message(channel_id, "Please reply with one of the listed file numbers.")
+            return {"handled": True, "status": "invalid_drive_file_number"}
+
+        selected_file = files[selected_index]
+        event_key = build_drive_import_event_key(user_id, channel_id, selected_file, event_ts)
+        if event_key and not self.storage.claim_processed_event(event_key):
+            return {"handled": True, "status": "duplicate_drive_import"}
+
+        try:
+            imported_text = self.drive_service.read_file_content(selected_file["id"])
+        except Exception as exc:
+            self.slack_service.post_message(
+                channel_id,
+                f"Could not import that Google Drive file through MCP: {exc}",
+            )
+            return {"handled": True, "status": "drive_file_import_failed"}
+
+        if not imported_text:
+            self.slack_service.post_message(channel_id, "That Google Drive file did not include readable text.")
+            return {"handled": True, "status": "empty_drive_file"}
+
+        parsed_note = parse_structured_lecture_note(imported_text)
+        if parsed_note:
+            topic = parsed_note["topic"]
+            note_text = parsed_note["text"]
+        else:
+            topic = derive_topic_from_drive_file(selected_file)
+            note_text = imported_text
+
+        note = self.storage.save_lecture_note(
+            topic=topic,
+            note_text=note_text,
+            sender=user_id,
+            channel=channel_id,
+            source={
+                "type": getattr(self.drive_service, "last_read_source", None) or "google_drive_mcp",
+                "file_id": selected_file["id"],
+                "file_name": selected_file["title"],
+                "view_url": selected_file.get("viewUrl"),
+            },
+        )
+        self.storage.clear_pending_action(user_id)
+        self.slack_service.post_message(
+            channel_id,
+            f"✅ Imported Google Drive file *{selected_file['title']}* as lecture notes for *{note['topic']}*.",
+        )
+        return {"handled": True, "status": "imported_drive_lecture_note"}
 
     def generate_quiz_from_topic_number(self, user_id, channel_id, text, pending_action):
         try:
@@ -327,6 +439,41 @@ def parse_structured_lecture_note(text):
 def format_topic_list(topics):
     topic_lines = "\n".join(f"{index}. {topic}" for index, topic in enumerate(topics, start=1))
     return f"✨ Pick a topic to generate a quiz:\n\n{topic_lines}"
+
+
+def format_lecture_note_source_prompt():
+    return "\n".join(
+        [
+            "📝 How do you want to add lecture notes?",
+            "",
+            "1. Paste in Slack",
+            "2. Import from Google Drive",
+        ]
+    )
+
+
+def format_drive_file_list(files):
+    file_lines = "\n".join(
+        f"{index}. {file_data['title']}"
+        for index, file_data in enumerate(files, start=1)
+    )
+    return f"Pick a Google Drive file to import:\n\n{file_lines}"
+
+
+def derive_topic_from_drive_file(file_data):
+    title = file_data.get("title", "Google Drive lecture note").strip()
+    for suffix in (".gdoc", ".docx", ".pdf", ".md", ".txt"):
+        if title.casefold().endswith(suffix):
+            return title[: -len(suffix)].strip() or title
+    return title
+
+
+def build_drive_import_event_key(user_id, channel_id, selected_file, event_ts=None):
+    file_id = selected_file.get("id")
+    if not event_ts or not file_id:
+        return None
+
+    return f"drive-import:{user_id}:{channel_id}:{event_ts}:{file_id}"
 
 
 def format_quiz_draft(draft):

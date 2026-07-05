@@ -110,13 +110,16 @@ class InMemoryStorage:
         with self.upload_tracking_lock:
             self.in_progress_uploads.discard(upload_key)
 
-    def save_lecture_note(self, topic, note_text, sender, channel):
+    def save_lecture_note(self, topic, note_text, sender, channel, source=None):
         note = {
             "topic": topic,
             "text": note_text,
             "sender": sender,
             "channel": channel,
         }
+        if source:
+            note["source"] = source
+
         state = self.load_course_state()
         lecture_notes = state.setdefault("lecture_notes", [])
         lecture_notes.append(note)
