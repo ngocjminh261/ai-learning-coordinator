@@ -1,6 +1,7 @@
 from features.quiz_maker import (
     QuizMaker,
     format_quiz_draft,
+    format_student_quiz_intro,
     format_student_question,
     parse_structured_lecture_note,
 )
@@ -12,6 +13,7 @@ class FakeSlackService:
         self.messages = []
         self.dms = []
         self.before_post_dm = None
+        self.reactions_by_message = {}
         self.user_titles = {
             "UINSTRUCTOR": "Instructor",
             "USTUDENT1": "",
@@ -43,6 +45,9 @@ class FakeSlackService:
 
     def is_bot_user(self, user_id):
         return user_id in self.bot_users
+
+    def get_message_reactions(self, channel_id, message_ts):
+        return self.reactions_by_message.get((channel_id, message_ts), [])
 
 
 class FakeAIService:
@@ -97,14 +102,17 @@ def build_quiz_maker(tmp_path):
     return quiz_maker, storage, slack_service, ai_service
 
 
-def message_event(text, user_id="UINSTRUCTOR", channel_id="DINSTRUCTOR"):
-    return {
+def message_event(text, user_id="UINSTRUCTOR", channel_id="DINSTRUCTOR", ts=None):
+    event = {
         "type": "message",
         "channel_type": "im",
         "channel": channel_id,
         "user": user_id,
         "text": text,
     }
+    if ts:
+        event["ts"] = ts
+    return event
 
 
 def test_parse_structured_lecture_note():
@@ -139,7 +147,8 @@ def test_quiz_topic_selection_generates_draft(tmp_path):
     draft_result = quiz_maker.handle_message_event(message_event("1"))
 
     assert topic_result["status"] == "waiting_for_quiz_topic_number"
-    assert "1. EDA" in slack_service.messages[-2]["text"]
+    assert "1. EDA" in slack_service.messages[-3]["text"]
+    assert "⏳ Generating the quiz draft now..." in slack_service.messages[-2]["text"]
     assert draft_result["status"] == "sent_quiz_draft"
     assert ai_service.calls[0]["topic"] == "EDA"
     assert storage.get_pending_action("UINSTRUCTOR")["state"] == "quiz_approval"
@@ -164,9 +173,15 @@ def test_duplicate_topic_number_does_not_generate_draft_twice(tmp_path):
     draft_previews = [
         message
         for message in slack_service.messages
-        if message["text"].startswith("Quiz draft:")
+        if message["text"].startswith("🧪 Draft quiz")
+    ]
+    progress_messages = [
+        message
+        for message in slack_service.messages
+        if message["text"] == "⏳ Generating the quiz draft now..."
     ]
     assert len(draft_previews) == 1
+    assert len(progress_messages) == 1
 
 
 def test_approve_sends_one_dm_per_question_to_non_staff_students(tmp_path):
@@ -176,13 +191,19 @@ def test_approve_sends_one_dm_per_question_to_non_staff_students(tmp_path):
     result = quiz_maker.handle_message_event(message_event("approve"))
 
     assert result["status"] == "sent_quiz"
+    assert "📤 Sending quiz..." in slack_service.messages[0]["text"]
     assert [dm["user"] for dm in slack_service.dms] == [
         "USTUDENT1",
         "USTUDENT1",
+        "USTUDENT1",
+        "USTUDENT2",
         "USTUDENT2",
         "USTUDENT2",
     ]
-    assert "Question 1/2" in slack_service.dms[0]["text"]
+    assert "🧠 *QUIZ: EDA*" in slack_service.dms[0]["text"]
+    assert "Please answer 2 questions" in slack_service.dms[0]["text"]
+    assert "*_Question 1/2: What does EDA help analysts inspect?_*" in slack_service.dms[1]["text"]
+    assert "QUIZ: EDA" not in slack_service.dms[1]["text"]
     assert storage.get_quiz_draft("UINSTRUCTOR") is None
     active_quiz = next(iter(storage.get_active_quizzes().values()))
     assert len(active_quiz["sent_questions"]) == 4
@@ -197,7 +218,7 @@ def test_duplicate_approve_does_not_send_quiz_twice(tmp_path):
 
     assert first_result["status"] == "sent_quiz"
     assert second_result["status"] == "no_draft_to_approve"
-    assert len(slack_service.dms) == 4
+    assert len(slack_service.dms) == 6
     assert len(storage.get_active_quizzes()) == 1
 
 
@@ -215,8 +236,13 @@ def test_duplicate_approve_during_send_reports_in_progress(tmp_path):
 
     assert first_result["status"] == "sent_quiz"
     assert duplicate_result["status"] == "quiz_send_in_progress"
-    assert len(slack_service.dms) == 4
-    assert "Sending quiz..." in slack_service.messages[0]["text"]
+    assert len(slack_service.dms) == 6
+    sending_messages = [
+        message
+        for message in slack_service.messages
+        if message["text"] == "📤 Sending quiz..."
+    ]
+    assert len(sending_messages) == 1
 
 
 def test_reaction_event_records_response_and_summary(tmp_path):
@@ -244,6 +270,26 @@ def test_reaction_event_records_response_and_summary(tmp_path):
     assert summary_result["status"] == "sent_quiz_summary"
     assert "Responses: 1/2" in slack_service.messages[-1]["text"]
     assert "q1: :one: 1" in slack_service.messages[-1]["text"]
+
+
+def test_summary_refreshes_responses_from_slack_reactions(tmp_path):
+    quiz_maker, storage, slack_service, ai_service = build_quiz_maker(tmp_path)
+    draft = ai_service.generate_quiz_draft("EDA", [])
+    storage.save_quiz_draft("UINSTRUCTOR", draft)
+    quiz_maker.handle_message_event(message_event("approve"))
+
+    active_quiz = next(iter(storage.get_active_quizzes().values()))
+    sent_question = active_quiz["sent_questions"][0]
+    slack_service.reactions_by_message[(sent_question["channel"], sent_question["ts"])] = [
+        {"name": "one", "users": ["USTUDENT1"]},
+    ]
+
+    summary_result = quiz_maker.handle_message_event(message_event("quiz summary"))
+
+    assert summary_result["status"] == "sent_quiz_summary"
+    assert "Responses: 1/2" in slack_service.messages[-1]["text"]
+    current_quiz_id, current_quiz = storage.get_current_quiz_for_owner("UINSTRUCTOR")
+    assert current_quiz["responses"]["USTUDENT1"]["q1"] == "one"
 
 
 def test_summary_uses_current_quiz_for_owner(tmp_path):
@@ -274,16 +320,41 @@ def test_summary_uses_current_quiz_for_owner(tmp_path):
     result = quiz_maker.handle_message_event(message_event("quiz summary"))
 
     assert result["status"] == "sent_quiz_summary"
-    assert "Quiz summary: New quiz" in slack_service.messages[-1]["text"]
+    assert "📊 Quiz summary: *New quiz*" in slack_service.messages[-1]["text"]
     assert "Quiz ID: quiz-new" in slack_service.messages[-1]["text"]
+
+
+def test_duplicate_quiz_summary_event_is_ignored(tmp_path):
+    quiz_maker, storage, slack_service, ai_service = build_quiz_maker(tmp_path)
+    draft = ai_service.generate_quiz_draft("EDA", [])
+    storage.save_quiz_draft("UINSTRUCTOR", draft)
+    quiz_maker.handle_message_event(message_event("approve"))
+
+    summary_event = message_event("quiz summary", ts="111.222")
+    first_result = quiz_maker.handle_message_event(summary_event)
+    second_result = quiz_maker.handle_message_event(summary_event)
+
+    assert first_result["status"] == "sent_quiz_summary"
+    assert second_result["status"] == "duplicate_quiz_summary"
+    summary_messages = [
+        message
+        for message in slack_service.messages
+        if message["text"].startswith("📊 Quiz summary:")
+    ]
+    assert len(summary_messages) == 1
 
 
 def test_formatters_show_staff_and_student_versions():
     draft = FakeAIService().generate_quiz_draft("EDA", [])
 
     staff_text = format_quiz_draft(draft)
-    student_text = format_student_question("EDA", draft["questions"][0], 1, 2)
+    intro_text = format_student_quiz_intro("EDA", 2)
+    student_text = format_student_question(draft["questions"][0], 1, 2)
 
     assert "Correct answer" in staff_text
     assert "Correct answer" not in student_text
-    assert "React with :one:" in student_text
+    assert "🧠 *QUIZ: EDA*" in intro_text
+    assert "Please answer 2 questions" in intro_text
+    assert "QUIZ: EDA" not in student_text
+    assert "*_Question 1/2: What does EDA help analysts inspect?_*" in student_text
+    assert "React with :one:" not in student_text

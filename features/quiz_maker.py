@@ -30,7 +30,7 @@ class QuizMaker:
             if not self.is_staff_user(user_id):
                 self.slack_service.post_message(
                     channel_id,
-                    "Only users with the Instructor or Teaching Assistant title can use quiz commands.",
+                    "🔒 Only users with the Instructor or Teaching Assistant title can use quiz commands.",
                 )
                 return {"handled": True, "status": "rejected_non_staff"}
 
@@ -38,7 +38,7 @@ class QuizMaker:
             self.storage.set_pending_action(user_id, "lecture_note")
             self.slack_service.post_message(
                 channel_id,
-                "Send the lecture note using:\n\nTopic: <topic>\nNote:\n<note text>",
+                "📝 Please send the lecture note using this format:\n\nTopic: <topic>\nNote:\n<note text>",
             )
             return {"handled": True, "status": "waiting_for_lecture_note"}
 
@@ -52,7 +52,11 @@ class QuizMaker:
             return self.regenerate_quiz(user_id, channel_id)
 
         if lowered == "quiz summary":
-            return self.send_quiz_summary(user_id, channel_id)
+            return self.send_quiz_summary(
+                user_id,
+                channel_id,
+                event.get("ts") or event.get("event_ts"),
+            )
 
         pending_action = self.storage.get_pending_action(user_id)
         if not pending_action:
@@ -65,11 +69,10 @@ class QuizMaker:
             return self.generate_quiz_from_topic_number(user_id, channel_id, text, pending_action)
 
         if pending_action.get("state") == "quiz_generating":
-            self.slack_service.post_message(channel_id, "Generating the quiz draft now.")
             return {"handled": True, "status": "quiz_generation_in_progress"}
 
         if pending_action.get("state") == "quiz_approval":
-            self.slack_service.post_message(channel_id, "Reply `approve` or `regenerate`.")
+            self.slack_service.post_message(channel_id, "Please reply `approve` or `regenerate`.")
             return {"handled": True, "status": "unexpected_quiz_approval_reply"}
 
         return {"handled": False}
@@ -109,7 +112,7 @@ class QuizMaker:
         if not topics:
             self.slack_service.post_message(
                 channel_id,
-                "No lecture-note topics saved yet. Send `lecture note` first.",
+                "No lecture-note topics are saved yet. Please send `lecture note` first. 📝",
             )
             return {"handled": True, "status": "no_topics"}
 
@@ -122,7 +125,7 @@ class QuizMaker:
         if not parsed_note:
             self.slack_service.post_message(
                 channel_id,
-                "Use:\n\nTopic: <topic>\nNote:\n<note text>",
+                "Please use this format:\n\nTopic: <topic>\nNote:\n<note text>",
             )
             return {"handled": True, "status": "invalid_lecture_note"}
 
@@ -135,7 +138,7 @@ class QuizMaker:
         self.storage.clear_pending_action(user_id)
         self.slack_service.post_message(
             channel_id,
-            f"Saved lecture note for *{note['topic']}*. Send `quiz` when ready.",
+            f"✅ Saved lecture note for *{note['topic']}*. Please send `quiz` when you are ready.",
         )
         return {"handled": True, "status": "saved_lecture_note"}
 
@@ -143,12 +146,12 @@ class QuizMaker:
         try:
             selected_index = int(text.strip()) - 1
         except ValueError:
-            self.slack_service.post_message(channel_id, "Reply with the topic number.")
+            self.slack_service.post_message(channel_id, "Please reply with the topic number.")
             return {"handled": True, "status": "invalid_topic_number"}
 
         topics = pending_action.get("topics", [])
         if selected_index < 0 or selected_index >= len(topics):
-            self.slack_service.post_message(channel_id, "Reply with one of the listed topic numbers.")
+            self.slack_service.post_message(channel_id, "Please reply with one of the listed topic numbers.")
             return {"handled": True, "status": "invalid_topic_number"}
 
         topic = topics[selected_index]
@@ -164,7 +167,7 @@ class QuizMaker:
         if not topic and draft:
             topic = draft.get("topic")
         if not topic:
-            self.slack_service.post_message(channel_id, "No quiz draft to regenerate. Send `quiz` first.")
+            self.slack_service.post_message(channel_id, "No quiz draft is ready to regenerate. Please send `quiz` first.")
             return {"handled": True, "status": "no_draft_to_regenerate"}
 
         return self.generate_and_send_draft(user_id, channel_id, topic)
@@ -172,9 +175,10 @@ class QuizMaker:
     def generate_and_send_draft(self, user_id, channel_id, topic):
         notes = self.storage.get_notes_for_topic(topic)
         if not notes:
-            self.slack_service.post_message(channel_id, f"No lecture notes saved for *{topic}*.")
+            self.slack_service.post_message(channel_id, f"No lecture notes are saved for *{topic}* yet.")
             return {"handled": True, "status": "no_notes_for_topic"}
 
+        self.slack_service.post_message(channel_id, "⏳ Generating the quiz draft now...")
         draft = self.ai_service.generate_quiz_draft(topic, notes)
         self.storage.save_quiz_draft(user_id, draft)
         self.storage.set_pending_action(user_id, "quiz_approval", topic=topic)
@@ -186,20 +190,24 @@ class QuizMaker:
         if not draft:
             pending_action = self.storage.get_pending_action(user_id)
             if pending_action and pending_action.get("state") == "quiz_sending":
-                self.slack_service.post_message(channel_id, "Sending quiz...")
                 return {"handled": True, "status": "quiz_send_in_progress"}
 
-            self.slack_service.post_message(channel_id, "No quiz draft to approve. Send `quiz` first.")
+            self.slack_service.post_message(channel_id, "No quiz draft is ready to approve. Please send `quiz` first.")
             return {"handled": True, "status": "no_draft_to_approve"}
 
         self.storage.set_pending_action(user_id, "quiz_sending", topic=draft["topic"])
+        self.slack_service.post_message(channel_id, "📤 Sending quiz...")
         recipients = self.get_student_recipients()
         sent_questions = []
         for recipient in recipients:
+            self.slack_service.post_dm(
+                recipient,
+                format_student_quiz_intro(draft["topic"], len(draft["questions"])),
+            )
             for question_index, question in enumerate(draft["questions"], start=1):
                 response = self.slack_service.post_dm(
                     recipient,
-                    format_student_question(draft["topic"], question, question_index, len(draft["questions"])),
+                    format_student_question(question, question_index, len(draft["questions"])),
                 )
                 sent_questions.append(
                     {
@@ -225,18 +233,54 @@ class QuizMaker:
         self.storage.clear_pending_action(user_id)
         self.slack_service.post_message(
             channel_id,
-            f"Sent *{draft['topic']}* quiz to {len(recipients)} student(s).",
+            f"✅ Sent the *{draft['topic']}* quiz to {len(recipients)} student(s).",
         )
         return {"handled": True, "status": "sent_quiz", "quiz_id": quiz_id}
 
-    def send_quiz_summary(self, user_id, channel_id):
+    def send_quiz_summary(self, user_id, channel_id, event_ts=None):
+        if event_ts:
+            event_key = f"quiz-summary:{user_id}:{event_ts}"
+            if not self.storage.claim_processed_event(event_key):
+                return {"handled": True, "status": "duplicate_quiz_summary"}
+
         quiz_id, quiz = self.storage.get_current_quiz_for_owner(user_id)
         if not quiz:
             self.slack_service.post_message(channel_id, "No active quiz found yet.")
             return {"handled": True, "status": "no_active_quiz"}
 
+        self.refresh_quiz_responses_from_slack(quiz_id, quiz)
+        _, quiz = self.storage.get_current_quiz_for_owner(user_id)
         self.slack_service.post_message(channel_id, format_quiz_summary(quiz_id, quiz))
         return {"handled": True, "status": "sent_quiz_summary"}
+
+    def refresh_quiz_responses_from_slack(self, quiz_id, quiz):
+        refreshed_responses = {
+            student_id: dict(student_responses)
+            for student_id, student_responses in quiz.get("responses", {}).items()
+        }
+        valid_reactions = set(REACTION_LABELS)
+        for sent_question in quiz.get("sent_questions", []):
+            channel_id = sent_question.get("channel")
+            message_ts = sent_question.get("ts")
+            question_id = sent_question.get("id")
+            if not channel_id or not message_ts or not question_id:
+                continue
+
+            try:
+                reactions = self.slack_service.get_message_reactions(channel_id, message_ts)
+            except Exception as exc:
+                print(f"Could not fetch quiz reactions for {channel_id}/{message_ts}: {exc}")
+                continue
+
+            for reaction in reactions:
+                reaction_name = reaction.get("name")
+                if reaction_name not in valid_reactions:
+                    continue
+                for reacting_user in reaction.get("users", []):
+                    student_responses = refreshed_responses.setdefault(reacting_user, {})
+                    student_responses[question_id] = reaction_name
+
+        self.storage.replace_quiz_responses(quiz_id, refreshed_responses)
 
     def get_student_recipients(self):
         recipients = []
@@ -274,7 +318,7 @@ def parse_structured_lecture_note(text):
 
 def format_topic_list(topics):
     topic_lines = "\n".join(f"{index}. {topic}" for index, topic in enumerate(topics, start=1))
-    return f"Pick a topic for the quiz:\n\n{topic_lines}"
+    return f"✨ Pick a topic to generate a quiz:\n\n{topic_lines}"
 
 
 def format_quiz_draft(draft):
@@ -295,26 +339,31 @@ def format_quiz_draft(draft):
         )
 
     return (
-        f"Quiz draft: {draft['topic']}\n\n"
+        f"🧪 Draft quiz for *{draft['topic']}*\n\n"
         + "\n\n".join(question_blocks)
-        + "\n\nReply `approve` to send, or `regenerate` to make a new draft."
+        + "\n\nReply `approve` to send this quiz, or `regenerate` to make a new draft."
     )
 
 
-def format_student_question(topic, question, question_index, question_count):
+def format_student_quiz_intro(topic, question_count):
+    return "\n".join(
+        [
+            f"🧠 *QUIZ: {topic}*",
+            "",
+            f"Please answer {question_count} questions by reacting to each question message with :one:, :two:, or :three:.",
+        ]
+    )
+
+
+def format_student_question(question, question_index, question_count):
     choices = question["choices"]
     return "\n".join(
         [
-            f"Quiz: {topic}",
-            "",
-            f"Question {question_index}/{question_count}:",
-            question["text"],
+            f"*_Question {question_index}/{question_count}: {question['text']}_*",
             "",
             f":one: {choices['one']}",
             f":two: {choices['two']}",
             f":three: {choices['three']}",
-            "",
-            "React with :one:, :two:, or :three:.",
         ]
     )
 
@@ -324,7 +373,7 @@ def format_quiz_summary(quiz_id, quiz):
     recipients = quiz.get("recipients", [])
     questions = quiz.get("questions", [])
     lines = [
-        f"Quiz summary: {quiz.get('topic', 'Unknown topic')}",
+        f"📊 Quiz summary: *{quiz.get('topic', 'Unknown topic')}*",
         "Scope: latest sent quiz",
         "",
         f"Responses: {len(responses)}/{len(recipients)}",
