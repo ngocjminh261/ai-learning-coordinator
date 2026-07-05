@@ -172,7 +172,7 @@ def test_duplicate_topic_number_does_not_generate_draft_twice(tmp_path):
     draft_previews = [
         message
         for message in slack_service.messages
-        if message["text"].startswith("Quiz draft:")
+        if message["text"].startswith("🧪 Draft quiz")
     ]
     assert len(draft_previews) == 1
 
@@ -192,8 +192,8 @@ def test_approve_sends_one_dm_per_question_to_non_staff_students(tmp_path):
         "USTUDENT2",
         "USTUDENT2",
     ]
-    assert "*QUIZ: EDA*" in slack_service.dms[0]["text"]
-    assert "React to each question message" in slack_service.dms[0]["text"]
+    assert "🧠 *QUIZ: EDA*" in slack_service.dms[0]["text"]
+    assert "Please answer 2 questions" in slack_service.dms[0]["text"]
     assert "*_Question 1/2: What does EDA help analysts inspect?_*" in slack_service.dms[1]["text"]
     assert "QUIZ: EDA" not in slack_service.dms[1]["text"]
     assert storage.get_quiz_draft("UINSTRUCTOR") is None
@@ -229,7 +229,7 @@ def test_duplicate_approve_during_send_reports_in_progress(tmp_path):
     assert first_result["status"] == "sent_quiz"
     assert duplicate_result["status"] == "quiz_send_in_progress"
     assert len(slack_service.dms) == 6
-    assert "Sending quiz..." in slack_service.messages[0]["text"]
+    assert "📤 Sending quiz..." in slack_service.messages[0]["text"]
 
 
 def test_reaction_event_records_response_and_summary(tmp_path):
@@ -307,7 +307,7 @@ def test_summary_uses_current_quiz_for_owner(tmp_path):
     result = quiz_maker.handle_message_event(message_event("quiz summary"))
 
     assert result["status"] == "sent_quiz_summary"
-    assert "Quiz summary: New quiz" in slack_service.messages[-1]["text"]
+    assert "📊 Quiz summary: *New quiz*" in slack_service.messages[-1]["text"]
     assert "Quiz ID: quiz-new" in slack_service.messages[-1]["text"]
 
 
@@ -326,7 +326,7 @@ def test_duplicate_quiz_summary_event_is_ignored(tmp_path):
     summary_messages = [
         message
         for message in slack_service.messages
-        if message["text"].startswith("Quiz summary:")
+        if message["text"].startswith("📊 Quiz summary:")
     ]
     assert len(summary_messages) == 1
 
@@ -340,8 +340,8 @@ def test_formatters_show_staff_and_student_versions():
 
     assert "Correct answer" in staff_text
     assert "Correct answer" not in student_text
-    assert "*QUIZ: EDA*" in intro_text
-    assert "React to each question message" in intro_text
+    assert "🧠 *QUIZ: EDA*" in intro_text
+    assert "Please answer 2 questions" in intro_text
     assert "QUIZ: EDA" not in student_text
     assert "*_Question 1/2: What does EDA help analysts inspect?_*" in student_text
     assert "React with :one:" not in student_text
