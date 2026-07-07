@@ -1,32 +1,55 @@
 # CoursePilot
 
-CoursePilot is a Slack-based teaching assistant that helps instructors spot confusion, coordinate support, and create reusable course resources without leaving Slack.
+<p align="center">
+  <img src="img/CoursePilot_logo_with_text.png" alt="CoursePilot logo with the tagline Navigate learning. Together." width="360">
+</p>
 
-For the hackathon MVP, it listens to Slack activity, counts question-like messages, alerts the coordinator when students may need help, and can turn a DM'd syllabus PDF into a quick fact sheet Slack canvas.
+CoursePilot is a Slack agent that helps instructors detect student confusion, coordinate support, and create reusable course resources without leaving the class workspace.
+
+It turns everyday Slack activity into teaching action: study-group suggestions, private quiz checks, instructor summaries, and course FAQ resources.
+
+## Why it matters
+
+Students often struggle quietly, and repeated questions can get buried in busy class channels. CoursePilot helps instructors see those patterns earlier and respond with targeted support before students fall further behind.
 
 ## What it does
 
 - Receives Slack events at `/slack/events`
-- Counts messages from each user that end with `?`
-- Prints the live question count in the terminal
-- Sends a private Slack alert to `ADMIN_SLACK_ID` when a user reaches the threshold
-- Uses Slack search to include recent message context in the alert
-- Supports study-group coordination when multiple students struggle with the same topic
-- Supports lecture-note based quiz generation, private Slack quiz delivery, and quiz summaries
-- Supports Google Drive lecture-note import for quiz context
-- Lets an instructor or teaching assistant DM the bot a PDF labeled as a syllabus
-- Extracts course name, instructor, schedule, location, contacts, and office hours with Gemini or Ollama
-- Creates a `Course quick fact + FAQ` canvas in `COURSE_CHANNEL_ID`
+- Detects repeated question patterns from students
+- Alerts the coordinator when a student may need support
+- Creates or updates study-group lounges when several students struggle with the same topic
+- Imports lecture notes from Slack messages or Google Drive
+- Generates low-stakes quiz drafts for instructor approval
+- Sends approved quizzes by Slack DM and summarizes student reactions
+- Extracts syllabus details with Gemini or Ollama
+- Creates a `Course quick fact + FAQ` Slack canvas
 
 Question counts are stored in memory, so they reset when the app restarts.
 Course canvas, lecture-note, quiz, and OAuth state are stored under `data/` by default.
 
+## Architecture
+
+See [docs/architecture-diagram.md](docs/architecture-diagram.md) for the Mermaid architecture diagram.
+
+At a high level:
+
+```text
+Slack messages, DMs, reactions, canvases
+  -> Flask /slack/events
+  -> feature modules for study groups, quizzes, and syllabus/FAQ
+  -> Slack SDK, Gemini/Ollama, Google Drive MCP, and local JSON storage
+```
+
+## Built with
+
+Python, Flask, Slack API, Slack SDK, Gemini, Ollama, Google Drive MCP, Google OAuth, pypdf, pytest, and local JSON storage.
+
 ## Setup
 
-Install dependencies:
+Install dependencies with `uv`:
 
 ```bash
-pip3 install flask slack_sdk pypdf pytest
+uv sync
 ```
 
 Create your local env file:
@@ -113,7 +136,7 @@ The callback saves the OAuth token to `GOOGLE_OAUTH_TOKEN_PATH`.
 Start the Flask app:
 
 ```bash
-python3 app.py
+uv run python app.py
 ```
 
 In another terminal, expose the local server:
