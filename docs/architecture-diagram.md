@@ -1,4 +1,4 @@
-# Course Orchestrator Architecture
+# CoursePilot Architecture
 
 ```mermaid
 flowchart TD

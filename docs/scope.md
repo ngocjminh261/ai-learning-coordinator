@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a Slack-based AI Learning Coordinator demo that helps teachers spot confusion and respond faster.
+Build a Slack-based CoursePilot demo that helps teachers spot confusion and respond faster.
 
 ## Demo Flow
 

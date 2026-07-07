@@ -1,6 +1,6 @@
-# Course Orchestrator
+# CoursePilot
 
-Course Orchestrator is a Slack-based teaching assistant that helps instructors spot confusion, coordinate support, and create reusable course resources without leaving Slack.
+CoursePilot is a Slack-based teaching assistant that helps instructors spot confusion, coordinate support, and create reusable course resources without leaving Slack.
 
 For the hackathon MVP, it listens to Slack activity, counts question-like messages, alerts the coordinator when students may need help, and can turn a DM'd syllabus PDF into a quick fact sheet Slack canvas.
 
