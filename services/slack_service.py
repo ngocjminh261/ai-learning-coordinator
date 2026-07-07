@@ -78,7 +78,7 @@ class SlackService:
         return self.user_client.search_messages(query="?", count=30, sort="timestamp")
 
     def create_public_channel(self, channel_name):
-        return self.user_client.conversations_create(name=channel_name, is_private=False)
+        return self.bot_client.conversations_create(name=channel_name, is_private=False)
 
     def invite_user_to_channel(self, channel_id, user_id):
-        return self.user_client.conversations_invite(channel=channel_id, users=user_id)
+        return self.bot_client.conversations_invite(channel=channel_id, users=user_id)

@@ -112,13 +112,12 @@ Required bot scopes:
 - `users:read`
 - `im:write`
 - `reactions:read`
+- `channels:write`
 - `channels:write.invites`
 
 Required user scopes:
 
 - `search:read`
-- `channels:write`
-- `channels:write.invites`
 
 If the app listens in private channels, add `groups:history`. Reinstall the Slack app after changing scopes or event subscriptions.
 

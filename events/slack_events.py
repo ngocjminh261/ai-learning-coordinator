@@ -18,6 +18,10 @@ def handle_slack_event_payload(
 
     if data and "event" in data:
         event = data["event"]
+        event_key = _build_event_key(data, event)
+        if event_key and not storage.claim_processed_event(event_key):
+            print(f"↪️  Skipping duplicate Slack event: {event_key}")
+            return jsonify({"status": "ok"})
 
         if event.get("type") == "reaction_added" and quiz_maker:
             quiz_result = quiz_maker.handle_reaction_event(event)
@@ -27,6 +31,9 @@ def handle_slack_event_payload(
         if event.get("type") == "message" and not event.get("bot_id"):
             if syllabus_compiler:
                 syllabus_result = syllabus_compiler.handle_slack_file_event(event)
+                if syllabus_result.get("handled"):
+                    return jsonify({"status": "ok"})
+                syllabus_result = syllabus_compiler.handle_message_event(event)
                 if syllabus_result.get("handled"):
                     return jsonify({"status": "ok"})
 
@@ -40,7 +47,17 @@ def handle_slack_event_payload(
 
             if message_text.endswith("?"):
                 assigned_topic = classify_topic(message_text)
-                current_topic_count = storage.record_question(user_id, assigned_topic, message_text)
+                message_key = _build_message_key(event.get("channel"), event.get("ts"))
+                current_topic_count, recorded = storage.record_question(
+                    user_id,
+                    assigned_topic,
+                    message_text,
+                    message_key,
+                )
+
+                if not recorded:
+                    print(f"↪️  Skipping duplicate question event: {message_key}")
+                    return jsonify({"status": "ok"})
 
                 print(f"\n📊 --- REAL-TIME TOPIC LOGGING MATRIX ---")
                 print(f"USER: <@{user_id}> | TOPIC: {assigned_topic.upper()} | COUNT: {current_topic_count}")
@@ -52,7 +69,12 @@ def handle_slack_event_payload(
 
                 if current_topic_count == 3:
                     print(f"🚨 TOPIC THRESHOLD: User <@{user_id}> hit 3 questions for topic '{assigned_topic}'!")
-                    _trigger_study_group(study_group_orchestrator, assigned_topic, user_id)
+                    _trigger_study_group(
+                        study_group_orchestrator,
+                        assigned_topic,
+                        user_id,
+                        event.get("channel"),
+                    )
 
     return jsonify({"status": "ok"})
 
@@ -94,13 +116,22 @@ def active_search_polling_worker(storage, slack_service, study_group_orchestrato
                     current_topic_count = storage.get_topic_count(user_id, assigned_topic)
 
                     if current_topic_count < 3:
-                        new_count = storage.record_question(user_id, assigned_topic, message_text)
+                        match_channel_id = match.get("channel", {}).get("id")
+                        message_key = _build_message_key(match_channel_id, match.get("ts"))
+                        new_count, recorded = storage.record_question(
+                            user_id,
+                            assigned_topic,
+                            message_text,
+                            message_key,
+                        )
+
+                        if not recorded:
+                            continue
 
                         print(f"🔍 [MATCH] User: {user_id} | Topic: {assigned_topic.upper()} | Count: {new_count} | Text: \"{message_text}\"")
 
                         if new_count == 3:
                             print(f"🚨 SEARCH API THRESHOLD: User <@{user_id}> hit 3 questions!")
-                            match_channel_id = match.get("channel", {}).get("id")
                             _trigger_study_group(study_group_orchestrator, assigned_topic, user_id, match_channel_id)
 
         except Exception as e:
@@ -114,3 +145,23 @@ def _trigger_study_group(study_group_orchestrator, assigned_topic, user_id, chan
         study_group_orchestrator.auto_orchestrate_study_group(assigned_topic, user_id, channel_id)
     except Exception as e:
         print(f"Study group orchestration error: {e}")
+
+
+def _build_message_key(channel_id, message_ts):
+    if not channel_id or not message_ts:
+        return None
+    return f"{channel_id}:{message_ts}"
+
+
+def _build_event_key(data, event):
+    if data.get("event_id"):
+        return f"slack-event:{data['event_id']}"
+
+    event_type = event.get("type")
+    channel_id = event.get("channel") or event.get("item", {}).get("channel")
+    user_id = event.get("user")
+    event_ts = event.get("ts") or event.get("event_ts")
+    if not event_type or not channel_id or not event_ts:
+        return None
+
+    return f"slack-event:{event_type}:{channel_id}:{user_id}:{event_ts}"

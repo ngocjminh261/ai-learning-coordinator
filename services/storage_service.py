@@ -7,6 +7,7 @@ class InMemoryStorage:
     def __init__(self, course_state_path="data/course_state.json"):
         self.student_topic_database = {}
         self.student_question_history = {}
+        self.seen_question_message_keys = set()
         self.active_study_groups = {}
         self.course_state_path = Path(course_state_path)
         self.upload_tracking_lock = threading.Lock()
@@ -14,7 +15,10 @@ class InMemoryStorage:
         self.in_progress_uploads = set()
         self.completed_uploads = set()
 
-    def record_question(self, user_id, topic, message_text):
+    def record_question(self, user_id, topic, message_text, message_key=None):
+        if message_key in self.seen_question_message_keys:
+            return self.get_topic_count(user_id, topic), False
+
         if user_id not in self.student_topic_database:
             self.student_topic_database[user_id] = {}
 
@@ -29,7 +33,10 @@ class InMemoryStorage:
             self.student_topic_database[user_id].get(topic, 0) + 1
         )
 
-        return self.student_topic_database[user_id][topic]
+        if message_key:
+            self.seen_question_message_keys.add(message_key)
+
+        return self.student_topic_database[user_id][topic], True
 
     def get_topic_count(self, user_id, topic):
         if user_id not in self.student_topic_database:

@@ -108,12 +108,6 @@ class StudyGroupOrchestrator:
                 if response.get("ok"):
                     group_channel_id = response["channel"]["id"]
 
-                    try:
-                        bot_user_id = self.slack_service.get_bot_user_id()
-                        self.slack_service.invite_user_to_channel(group_channel_id, bot_user_id)
-                    except Exception as bot_inv_err:
-                        print(f"Note: Could not invite bot to channel: {bot_inv_err}")
-
                     for student in qualifying_students:
                         try:
                             self.slack_service.invite_user_to_channel(group_channel_id, student)

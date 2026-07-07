@@ -31,6 +31,7 @@ class QuizMaker:
         text = event.get("text", "").strip()
         user_id = event.get("user")
         channel_id = event.get("channel")
+        event_ts = event.get("ts") or event.get("event_ts")
         if not text or not user_id:
             return {"handled": False}
 
@@ -44,7 +45,12 @@ class QuizMaker:
                 return {"handled": True, "status": "rejected_non_staff"}
 
         if lowered == "lecture note":
-            self.storage.set_pending_action(user_id, "lecture_note_source")
+            self.set_pending_action(
+                user_id,
+                "lecture_note_source",
+                channel_id,
+                event_ts,
+            )
             self.slack_service.post_message(
                 channel_id,
                 format_lecture_note_source_prompt(),
@@ -52,7 +58,7 @@ class QuizMaker:
             return {"handled": True, "status": "waiting_for_lecture_note_source"}
 
         if lowered == "quiz":
-            return self.start_quiz_topic_selection(user_id, channel_id)
+            return self.start_quiz_topic_selection(user_id, channel_id, event_ts)
 
         if lowered == "approve":
             return self.approve_quiz(user_id, channel_id)
@@ -64,18 +70,25 @@ class QuizMaker:
             return self.send_quiz_summary(
                 user_id,
                 channel_id,
-                event.get("ts") or event.get("event_ts"),
+                event_ts,
             )
 
         pending_action = self.storage.get_pending_action(user_id)
         if not pending_action:
+            return {"handled": False}
+        if not is_current_pending_reply(event, pending_action):
             return {"handled": False}
 
         if pending_action.get("state") == "lecture_note":
             return self.save_lecture_note_from_message(user_id, channel_id, text)
 
         if pending_action.get("state") == "lecture_note_source":
-            return self.handle_lecture_note_source_choice(user_id, channel_id, text)
+            return self.handle_lecture_note_source_choice(
+                user_id,
+                channel_id,
+                text,
+                event_ts,
+            )
 
         if pending_action.get("state") == "drive_lecture_note_file_number":
             return self.import_drive_lecture_note(
@@ -83,11 +96,17 @@ class QuizMaker:
                 channel_id,
                 text,
                 pending_action,
-                event.get("ts") or event.get("event_ts"),
+                event_ts,
             )
 
         if pending_action.get("state") == "quiz_topic_number":
-            return self.generate_quiz_from_topic_number(user_id, channel_id, text, pending_action)
+            return self.generate_quiz_from_topic_number(
+                user_id,
+                channel_id,
+                text,
+                pending_action,
+                event_ts,
+            )
 
         if pending_action.get("state") == "quiz_generating":
             return {"handled": True, "status": "quiz_generation_in_progress"}
@@ -98,10 +117,19 @@ class QuizMaker:
 
         return {"handled": False}
 
-    def handle_lecture_note_source_choice(self, user_id, channel_id, text):
+    def set_pending_action(self, user_id, state_name, channel_id, event_ts=None, **data):
+        return self.storage.set_pending_action(
+            user_id,
+            state_name,
+            channel_id=channel_id,
+            started_ts=event_ts,
+            **data,
+        )
+
+    def handle_lecture_note_source_choice(self, user_id, channel_id, text, event_ts=None):
         choice = text.strip()
         if choice == "1":
-            self.storage.set_pending_action(user_id, "lecture_note")
+            self.set_pending_action(user_id, "lecture_note", channel_id, event_ts)
             self.slack_service.post_message(
                 channel_id,
                 "📝 Please send the lecture note using this format:\n\nTopic: <topic>\nNote:\n<note text>",
@@ -129,9 +157,11 @@ class QuizMaker:
                 self.slack_service.post_message(channel_id, "No recent Google Drive files found.")
                 return {"handled": True, "status": "no_drive_files"}
 
-            self.storage.set_pending_action(
+            self.set_pending_action(
                 user_id,
                 "drive_lecture_note_file_number",
+                channel_id,
+                event_ts,
                 drive_files=files,
             )
             self.slack_service.post_message(channel_id, format_drive_file_list(files))
@@ -170,7 +200,7 @@ class QuizMaker:
         )
         return {"handled": True, "status": "recorded_quiz_response"}
 
-    def start_quiz_topic_selection(self, user_id, channel_id):
+    def start_quiz_topic_selection(self, user_id, channel_id, event_ts=None):
         topics = self.storage.get_lecture_note_topics()
         if not topics:
             self.slack_service.post_message(
@@ -179,7 +209,13 @@ class QuizMaker:
             )
             return {"handled": True, "status": "no_topics"}
 
-        self.storage.set_pending_action(user_id, "quiz_topic_number", topics=topics)
+        self.set_pending_action(
+            user_id,
+            "quiz_topic_number",
+            channel_id,
+            event_ts,
+            topics=topics,
+        )
         self.slack_service.post_message(channel_id, format_topic_list(topics))
         return {"handled": True, "status": "waiting_for_quiz_topic_number"}
 
@@ -262,7 +298,14 @@ class QuizMaker:
         )
         return {"handled": True, "status": "imported_drive_lecture_note"}
 
-    def generate_quiz_from_topic_number(self, user_id, channel_id, text, pending_action):
+    def generate_quiz_from_topic_number(
+        self,
+        user_id,
+        channel_id,
+        text,
+        pending_action,
+        event_ts=None,
+    ):
         try:
             selected_index = int(text.strip()) - 1
         except ValueError:
@@ -275,7 +318,13 @@ class QuizMaker:
             return {"handled": True, "status": "invalid_topic_number"}
 
         topic = topics[selected_index]
-        self.storage.set_pending_action(user_id, "quiz_generating", topic=topic)
+        self.set_pending_action(
+            user_id,
+            "quiz_generating",
+            channel_id,
+            event_ts,
+            topic=topic,
+        )
         return self.generate_and_send_draft(user_id, channel_id, topic)
 
     def regenerate_quiz(self, user_id, channel_id):
@@ -301,7 +350,7 @@ class QuizMaker:
         self.slack_service.post_message(channel_id, "⏳ Generating the quiz draft...")
         draft = self.ai_service.generate_quiz_draft(topic, notes)
         self.storage.save_quiz_draft(user_id, draft)
-        self.storage.set_pending_action(user_id, "quiz_approval", topic=topic)
+        self.set_pending_action(user_id, "quiz_approval", channel_id, topic=topic)
         self.slack_service.post_message(channel_id, format_quiz_draft(draft))
         return {"handled": True, "status": "sent_quiz_draft"}
 
@@ -315,7 +364,7 @@ class QuizMaker:
             self.slack_service.post_message(channel_id, "No quiz draft is ready to approve. Please send `quiz` first.")
             return {"handled": True, "status": "no_draft_to_approve"}
 
-        self.storage.set_pending_action(user_id, "quiz_sending", topic=draft["topic"])
+        self.set_pending_action(user_id, "quiz_sending", channel_id, topic=draft["topic"])
         self.slack_service.post_message(channel_id, "📤 Sending quiz...")
         recipients = self.get_student_recipients()
         sent_questions = []
@@ -523,6 +572,25 @@ def format_student_question(question, question_index, question_count):
             "────────────────────",
         ]
     )
+
+
+def is_current_pending_reply(event, pending_action):
+    if pending_action.get("channel_id") and pending_action.get("channel_id") != event.get("channel"):
+        return False
+
+    started_ts = pending_action.get("started_ts")
+    event_ts = event.get("ts") or event.get("event_ts")
+    if started_ts and event_ts:
+        return is_slack_ts_after(event_ts, started_ts)
+
+    return True
+
+
+def is_slack_ts_after(event_ts, started_ts):
+    try:
+        return float(event_ts) > float(started_ts)
+    except (TypeError, ValueError):
+        return False
 
 
 def format_quiz_summary(quiz_id, quiz):

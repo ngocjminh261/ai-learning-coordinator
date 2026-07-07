@@ -13,6 +13,36 @@ class SyllabusCompiler:
         self.admin_slack_ids = set(admin_slack_ids)
         self.course_channel_id = course_channel_id
 
+    def handle_message_event(self, event):
+        if not is_dm_message_event(event):
+            return {"handled": False}
+
+        text = event.get("text", "").strip()
+        if text.casefold() != "syllabus":
+            return {"handled": False}
+
+        user_id = event.get("user")
+        response_channel = event.get("channel")
+
+        if not self.is_staff_user(user_id):
+            self.slack_service.post_message(
+                response_channel,
+                "Only users with the Instructor or Teaching Assistant title can upload a syllabus.",
+            )
+            return {"handled": True, "status": "rejected_non_staff"}
+
+        self.storage.set_pending_action(
+            user_id,
+            "syllabus_upload",
+            channel_id=response_channel,
+            started_ts=event.get("ts") or event.get("event_ts"),
+        )
+        self.slack_service.post_message(
+            response_channel,
+            "Please upload the syllabus PDF in this DM.",
+        )
+        return {"handled": True, "status": "waiting_for_syllabus_upload"}
+
     def handle_slack_file_event(self, event):
         if not is_dm_file_share_event(event):
             return {"handled": False}
@@ -28,7 +58,21 @@ class SyllabusCompiler:
             return {"handled": True, "status": "rejected_non_staff"}
 
         files = event.get("files", [])
-        syllabus_files = [file_data for file_data in files if is_syllabus_upload(event, file_data)]
+        pending_action = self.storage.get_pending_action(user_id)
+        is_waiting_for_syllabus = is_current_syllabus_upload(event, pending_action)
+        is_stale_syllabus_upload = (
+            pending_action
+            and pending_action.get("state") == "syllabus_upload"
+            and not is_waiting_for_syllabus
+        )
+        if is_stale_syllabus_upload:
+            return {"handled": False}
+
+        syllabus_files = [
+            file_data
+            for file_data in files
+            if is_waiting_for_syllabus or is_syllabus_upload(event, file_data)
+        ]
         if not syllabus_files:
             return {"handled": False}
 
@@ -53,6 +97,8 @@ class SyllabusCompiler:
                     format_existing_canvas_message(active_canvas_id),
                 )
                 self.storage.complete_upload(upload_key)
+                if is_waiting_for_syllabus:
+                    self.storage.clear_pending_action(user_id)
                 return {
                     "handled": True,
                     "status": "blocked_existing_canvas",
@@ -62,6 +108,8 @@ class SyllabusCompiler:
             course_state = self.create_canvas_from_pdf_file(pdf_file)
         except Exception as exc:
             self.storage.fail_upload(upload_key)
+            if is_waiting_for_syllabus:
+                self.storage.clear_pending_action(user_id)
             self.slack_service.post_message(
                 response_channel,
                 f"Could not create the syllabus canvas: {exc}",
@@ -69,6 +117,8 @@ class SyllabusCompiler:
             return {"handled": True, "status": "failed", "error": str(exc)}
 
         self.storage.complete_upload(upload_key)
+        if is_waiting_for_syllabus:
+            self.storage.clear_pending_action(user_id)
         canvas_id = course_state["faq_canvas"]["canvas_id"]
         course_map = course_state["course_map"]
         self.slack_service.post_message(
@@ -136,6 +186,14 @@ def is_dm_file_share_event(event):
     return event.get("channel_type") == "im" or str(event.get("channel", "")).startswith("D")
 
 
+def is_dm_message_event(event):
+    if event.get("type") != "message":
+        return False
+    if event.get("bot_id"):
+        return False
+    return event.get("channel_type") == "im" or str(event.get("channel", "")).startswith("D")
+
+
 def is_pdf_file(file_data):
     file_name = (file_data.get("name") or file_data.get("title") or "").lower()
     return (
@@ -149,6 +207,26 @@ def is_syllabus_upload(event, file_data):
     text = event.get("text", "")
     file_name = file_data.get("name") or file_data.get("title") or ""
     return "syllabus" in f"{text} {file_name}".lower()
+
+
+def is_current_syllabus_upload(event, pending_action):
+    if not pending_action or pending_action.get("state") != "syllabus_upload":
+        return False
+    if pending_action.get("channel_id") != event.get("channel"):
+        return False
+    return is_slack_ts_after(
+        event.get("ts") or event.get("event_ts"),
+        pending_action.get("started_ts"),
+    )
+
+
+def is_slack_ts_after(event_ts, started_ts):
+    if not event_ts or not started_ts:
+        return False
+    try:
+        return float(event_ts) > float(started_ts)
+    except (TypeError, ValueError):
+        return False
 
 
 def normalize_profile_title(title):

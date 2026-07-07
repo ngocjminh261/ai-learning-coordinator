@@ -243,6 +243,34 @@ def test_quiz_topic_selection_generates_draft(tmp_path):
     assert "Correct answer: :one:" in slack_service.messages[-1]["text"]
 
 
+def test_stale_quiz_topic_number_does_not_generate_draft(tmp_path):
+    quiz_maker, storage, slack_service, ai_service = build_quiz_maker(tmp_path)
+    storage.save_lecture_note("EDA", "Histograms show distributions.", "UINSTRUCTOR", "DINSTRUCTOR")
+
+    topic_result = quiz_maker.handle_message_event(message_event("quiz", ts="200.000"))
+    stale_result = quiz_maker.handle_message_event(message_event("1", ts="100.000"))
+
+    assert topic_result["status"] == "waiting_for_quiz_topic_number"
+    assert stale_result == {"handled": False}
+    assert not ai_service.calls
+    assert storage.get_pending_action("UINSTRUCTOR")["state"] == "quiz_topic_number"
+
+
+def test_wrong_channel_quiz_topic_number_does_not_generate_draft(tmp_path):
+    quiz_maker, storage, slack_service, ai_service = build_quiz_maker(tmp_path)
+    storage.save_lecture_note("EDA", "Histograms show distributions.", "UINSTRUCTOR", "DINSTRUCTOR")
+
+    topic_result = quiz_maker.handle_message_event(message_event("quiz", ts="100.000"))
+    wrong_channel_result = quiz_maker.handle_message_event(
+        message_event("1", channel_id="DOTHER", ts="200.000")
+    )
+
+    assert topic_result["status"] == "waiting_for_quiz_topic_number"
+    assert wrong_channel_result == {"handled": False}
+    assert not ai_service.calls
+    assert storage.get_pending_action("UINSTRUCTOR")["state"] == "quiz_topic_number"
+
+
 def test_duplicate_topic_number_does_not_generate_draft_twice(tmp_path):
     quiz_maker, storage, slack_service, ai_service = build_quiz_maker(tmp_path)
     storage.save_lecture_note("EDA", "Histograms show distributions.", "UINSTRUCTOR", "DINSTRUCTOR")

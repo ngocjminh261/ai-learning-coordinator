@@ -76,6 +76,7 @@ def pdf_file_event(user_id="UADMIN"):
         "channel_type": "im",
         "channel": "DADMIN",
         "user": user_id,
+        "ts": "200.000",
         "files": [
             {
                 "name": "syllabus.pdf",
@@ -85,6 +86,71 @@ def pdf_file_event(user_id="UADMIN"):
             }
         ],
     }
+
+
+def message_event(text, user_id="UADMIN", ts="100.000"):
+    return {
+        "type": "message",
+        "channel_type": "im",
+        "channel": "DADMIN",
+        "user": user_id,
+        "text": text,
+        "ts": ts,
+    }
+
+
+def test_syllabus_command_waits_for_pdf_upload(tmp_path):
+    compiler, storage, slack_service = build_compiler(tmp_path)
+
+    result = compiler.handle_message_event(message_event("syllabus"))
+
+    assert result == {"handled": True, "status": "waiting_for_syllabus_upload"}
+    pending_action = storage.get_pending_action("UADMIN")
+    assert pending_action["state"] == "syllabus_upload"
+    assert pending_action["channel_id"] == "DADMIN"
+    assert pending_action["started_ts"] == "100.000"
+    assert "Please upload the syllabus PDF" in slack_service.messages[0]["text"]
+
+
+def test_waiting_syllabus_state_accepts_pdf_without_syllabus_name(tmp_path, monkeypatch):
+    compiler, storage, slack_service = build_compiler(tmp_path)
+    storage.set_pending_action(
+        "UADMIN",
+        "syllabus_upload",
+        channel_id="DADMIN",
+        started_ts="100.000",
+    )
+    event = pdf_file_event()
+    event["files"][0]["name"] = "course-outline.pdf"
+    monkeypatch.setattr(
+        "features.syllabus_compiler.extract_pdf_text",
+        lambda pdf_bytes: "Syllabus text",
+    )
+
+    result = compiler.handle_slack_file_event(event)
+
+    assert result == {"handled": True, "status": "created", "canvas_id": "F123CANVAS"}
+    assert storage.get_pending_action("UADMIN") is None
+    assert storage.load_course_state()["course_map"]["source_name"] == "course-outline.pdf"
+
+
+def test_waiting_syllabus_state_ignores_pdf_uploaded_before_command(tmp_path):
+    compiler, storage, slack_service = build_compiler(tmp_path)
+    storage.set_pending_action(
+        "UADMIN",
+        "syllabus_upload",
+        channel_id="DADMIN",
+        started_ts="200.000",
+    )
+    event = pdf_file_event()
+    event["ts"] = "100.000"
+    event["files"][0]["name"] = "course-outline.pdf"
+
+    result = compiler.handle_slack_file_event(event)
+
+    assert result == {"handled": False}
+    assert not slack_service.created_canvases
+    assert storage.get_pending_action("UADMIN")["state"] == "syllabus_upload"
 
 
 def test_admin_pdf_upload_creates_canvas_and_state(tmp_path, monkeypatch):
