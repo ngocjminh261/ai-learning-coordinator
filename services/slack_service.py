@@ -75,7 +75,7 @@ class SlackService:
         )
 
     def search_recent_questions(self):
-        return self.user_client.search_messages(query="?", count=30, sort="timestamp")
+        return self.user_client.search_messages(query="?", count=50, sort="timestamp")
 
     def create_public_channel(self, channel_name):
         return self.bot_client.conversations_create(name=channel_name, is_private=False)
