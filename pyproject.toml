@@ -1,7 +1,7 @@
 [project]
 name = "ai-learning-coordinator"
 version = "0.1.0"
-description = "Add your description here"
+description = "CoursePilot is a Slack-native AI teaching assistant that detects struggling students, organizes study groups, and turns course materials into instant learning resources."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
